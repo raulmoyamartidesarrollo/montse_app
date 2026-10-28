@@ -41,24 +41,40 @@ export default function App() {
 }
 
 function LoginScreen() {
+
   const { width, height } = useWindowDimensions();
+
   const insets = useSafeAreaInsets();
 
-  // Altura útil disponible dentro de las zonas seguras del dispositivo.
+  const [mode, setMode] = useState<ScreenMode>('login');
+
   const availableHeight = Math.max(
+
     0,
+
     height - insets.top - insets.bottom
+
   );
 
   const isVeryShortScreen = availableHeight < 650;
+
   const isShortScreen = availableHeight < 750;
+
   const isCompact = width < 380;
+
   const isTablet = width >= 600;
 
+  const isRegisterScreen = mode === 'register';
+
+  const isDenseLayout =
+
+    isVeryShortScreen || (isRegisterScreen && isShortScreen);
+
   const horizontalPadding = isCompact ? 16 : 20;
+
   const contentMaxWidth = isTablet ? 440 : 480;
 
-  const [mode, setMode] = useState<ScreenMode>('login');
+  
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -85,6 +101,8 @@ function LoginScreen() {
     isTablet,
     isShortScreen,
     isVeryShortScreen,
+    isRegisterScreen,
+    isDenseLayout,
   });
 
   const resetFields = () => {
@@ -210,7 +228,7 @@ function LoginScreen() {
               <Text style={styles.brandName}>MONTSE ÁLVAREZ</Text>
 
               <Text style={styles.brandCaption}>
-                MOVIMIENTO · EQUILIBRIO · BIENESTAR
+                OSTEOPATÍA · MASAJE · BIENESTAR
               </Text>
             </View>
 
@@ -523,6 +541,8 @@ type LayoutOptions = {
   isTablet: boolean;
   isShortScreen: boolean;
   isVeryShortScreen: boolean;
+  isRegisterScreen: boolean;
+  isDenseLayout: boolean;
 };
 
 function createStyles({
@@ -532,6 +552,8 @@ function createStyles({
   isTablet,
   isShortScreen,
   isVeryShortScreen,
+   isRegisterScreen,
+  isDenseLayout,
 }: LayoutOptions) {
   return StyleSheet.create({
     safeArea: {
@@ -558,8 +580,8 @@ function createStyles({
       maxWidth: isTablet ? 760 : undefined,
       alignSelf: 'center',
       paddingHorizontal: horizontalPadding,
-      paddingTop: isVeryShortScreen ? 6 : isShortScreen ? 10 : 20,
-      paddingBottom: isVeryShortScreen ? 8 : 16,
+      paddingTop: isDenseLayout ? 6 : isShortScreen ? 10 : 20,
+      paddingBottom: isDenseLayout ? 6 : 16,
     },
 
     loadingScreen: {
@@ -571,17 +593,17 @@ function createStyles({
 
     brand: {
       alignItems: 'center',
-      marginBottom: isVeryShortScreen ? 8 : isShortScreen ? 12 : 20,
+      marginBottom: isDenseLayout ? 6 : isShortScreen ? 12 : 20,
     },
 
     logo: {
-      width: isVeryShortScreen ? 40 : isShortScreen ? 48 : 60,
-      height: isVeryShortScreen ? 40 : isShortScreen ? 48 : 60,
-      borderRadius: isVeryShortScreen ? 14 : 20,
+      width: isDenseLayout ? 36 : isShortScreen ? 48 : 60,
+      height: isDenseLayout ? 36 : isShortScreen ? 48 : 60,
+      borderRadius: isDenseLayout ? 12 : 20,
       backgroundColor: colors.primary,
       alignItems: 'center',
       justifyContent: 'center',
-      marginBottom: isVeryShortScreen ? 5 : 8,
+      marginBottom: isDenseLayout ? 4 : 8,
     },
 
     brandName: {
@@ -609,7 +631,7 @@ function createStyles({
       borderRadius: 24,
       borderWidth: 1,
       borderColor: colors.surfaceBorder,
-      padding: isVeryShortScreen ? 14 : isCompact ? 18 : 24,
+      padding: isDenseLayout ? 12 : isCompact ? 18 : 24,
       shadowColor: '#2B2824',
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.04,
@@ -618,7 +640,7 @@ function createStyles({
     },
 
     intro: {
-      marginBottom: isVeryShortScreen ? 12 : 20,
+      marginBottom: isDenseLayout ? 8 : 20,
     },
 
     welcomeBadge: {
@@ -657,34 +679,34 @@ function createStyles({
     },
 
     fieldGroup: {
-      marginBottom: isVeryShortScreen ? 10 : 14,
+        marginBottom: isDenseLayout ? 7 : 14,
     },
 
     label: {
       fontFamily: 'PlusJakartaSans_600SemiBold',
       fontSize: 13,
-      lineHeight: 19,
+      lineHeight: 18,
       color: colors.text,
-      marginBottom: 8,
+      marginBottom: isDenseLayout ? 4 : 8,
     },
 
     inputContainer: {
-      minHeight: 52,
+      minHeight: isDenseLayout ? 44 : 52,
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: colors.background,
       borderWidth: 1,
       borderColor: colors.surfaceBorder,
       borderRadius: 14,
-      paddingHorizontal: 14,
+      paddingHorizontal: 12,
       gap: 10,
     },
 
     input: {
       flex: 1,
       minWidth: 0,
-      minHeight: 50,
-      paddingVertical: 12,
+      minHeight: isDenseLayout ? 42 : 50,
+      paddingVertical: isDenseLayout ? 8 : 12,
       fontFamily: 'PlusJakartaSans_400Regular',
       fontSize: 14,
       color: colors.text,
@@ -729,17 +751,17 @@ function createStyles({
     },
 
     primaryButton: {
-      minHeight: 52,
-      width: '100%',
-      backgroundColor: colors.primary,
-      borderRadius: 999,
-      paddingHorizontal: 22,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 12,
-      marginTop: 4,
-    },
+  minHeight: 48,
+  width: '100%',
+  backgroundColor: colors.primary,
+  borderRadius: 999,
+  paddingHorizontal: 22,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 12,
+  marginTop: 2,
+},
 
     primaryButtonPressed: {
       backgroundColor: colors.primaryPressed,
@@ -756,11 +778,11 @@ function createStyles({
       color: colors.onPrimary,
     },
 
-    divider: {
+   divider: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
-      marginVertical: isVeryShortScreen ? 10 : 18,
+      marginVertical: isDenseLayout ? 8 : 18,
     },
 
     dividerLine: {
