@@ -462,24 +462,7 @@ function LoginScreen() {
                       <Text style={styles.socialButtonText}>Google</Text>
                     </Pressable>
 
-                    {Platform.OS === 'ios' && (
-                      <Pressable
-                        onPress={() => handleSocialLogin('Apple')}
-                        style={({ pressed }) => [
-                          styles.socialButton,
-                          pressed && styles.socialButtonPressed,
-                        ]}
-                        accessibilityRole="button"
-                      >
-                        <Ionicons
-                          name="logo-apple"
-                          size={21}
-                          color={colors.text}
-                        />
-
-                        <Text style={styles.socialButtonText}>Apple</Text>
-                      </Pressable>
-                    )}
+                   
                   </View>
                 </>
               )}
