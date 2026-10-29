@@ -11,6 +11,11 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import {
+  registerWithEmail,
+  loginWithEmail,
+  resetPassword,
+} from './src/services/auth';
 
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -84,7 +89,7 @@ function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const [loading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
   const [fontsLoaded] = useFonts({
@@ -116,46 +121,116 @@ function LoginScreen() {
     resetFields();
   };
 
-  const handleSubmit = () => {
-    setMessage('');
+  const handleSubmit = async () => {
+  setMessage('');
 
-    if (!email.trim()) {
-      setMessage('Introduce tu correo electrónico.');
+  const normalizedEmail = email.trim().toLowerCase();
+
+  if (!normalizedEmail) {
+    setMessage('Introduce tu correo electrónico.');
+    return;
+  }
+
+  if (mode === 'register' && !name.trim()) {
+    setMessage('Introduce tu nombre completo.');
+    return;
+  }
+
+  if (mode !== 'forgot' && !password) {
+    setMessage('Introduce tu contraseña.');
+    return;
+  }
+
+  if (mode === 'register' && password.length < 8) {
+    setMessage('La contraseña debe tener al menos 8 caracteres.');
+    return;
+  }
+
+  if (mode === 'register' && password !== confirmPassword) {
+    setMessage('Las contraseñas no coinciden.');
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    if (mode === 'register') {
+      await registerWithEmail(
+        normalizedEmail,
+        password,
+        name.trim()
+      );
+
+      setMessage('¡Cuenta creada correctamente!');
       return;
     }
 
-    if (mode === 'register' && !name.trim()) {
-      setMessage('Introduce tu nombre completo.');
-      return;
-    }
+    if (mode === 'login') {
+      await loginWithEmail(
+        normalizedEmail,
+        password
+      );
 
-    if (mode !== 'forgot' && !password) {
-      setMessage('Introduce tu contraseña.');
-      return;
-    }
-
-    if (mode === 'register' && password.length < 8) {
-      setMessage('La contraseña debe tener al menos 8 caracteres.');
-      return;
-    }
-
-    if (mode === 'register' && password !== confirmPassword) {
-      setMessage('Las contraseñas no coinciden.');
+      setMessage('¡Has iniciado sesión correctamente!');
       return;
     }
 
     if (mode === 'forgot') {
+      await resetPassword(normalizedEmail);
+
       setMessage(
-        'La recuperación de contraseña estará disponible cuando conectemos Firebase.'
+        'Si existe una cuenta asociada a ese correo, recibirás las instrucciones para recuperar tu contraseña.'
       );
-      return;
     }
+  } catch (error: unknown) {
+    const errorCode =
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error
+        ? String(error.code)
+        : '';
 
-    setMessage(
-      'La autenticación todavía no está conectada. El siguiente paso será configurar Firebase.'
-    );
-  };
+    switch (errorCode) {
+      case 'auth/email-already-in-use':
+        setMessage('Este correo electrónico ya está registrado.');
+        break;
 
+      case 'auth/invalid-email':
+        setMessage('El correo electrónico no tiene un formato válido.');
+        break;
+
+      case 'auth/weak-password':
+        setMessage('La contraseña es demasiado débil.');
+        break;
+
+      case 'auth/invalid-credential':
+      case 'auth/wrong-password':
+      case 'auth/user-not-found':
+        setMessage('El correo o la contraseña no son correctos.');
+        break;
+
+      case 'auth/too-many-requests':
+        setMessage(
+          'Demasiados intentos. Espera un momento antes de volver a intentarlo.'
+        );
+        break;
+
+      case 'auth/network-request-failed':
+        setMessage(
+          'No se ha podido conectar. Comprueba tu conexión a Internet.'
+        );
+        break;
+
+      default:
+        setMessage(
+          'No se ha podido completar la operación. Inténtalo de nuevo.'
+        );
+        console.error('Error de autenticación:', error);
+    }
+  } finally {
+    setLoading(false);
+  }
+};
   const handleSocialLogin = (provider: 'Google' | 'Apple') => {
     setMessage(
       `El acceso con ${provider} estará disponible cuando configuremos la autenticación.`
