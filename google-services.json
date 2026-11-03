@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "641763515548",
+    "project_id": "montseapp-302eb",
+    "storage_bucket": "montseapp-302eb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:641763515548:android:710eb7b1d6bc0e80b22159",
+        "android_client_info": {
+          "package_name": "com.montseapp.mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "641763515548-4vp6o32ruegdsb7rubed2e1l1f57198o.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.montseapp.mobile",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "641763515548-0kjpojkk03prfbp8dnjol4qong5tm31v.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyACcWJpoKdlfXD-fsxnJaxLE2GRmiDZTGw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "641763515548-0kjpojkk03prfbp8dnjol4qong5tm31v.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "641763515548-f6v9oh7r6okomuvreqdr89ug3j2r2fdg.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.montseapp.mobile"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
