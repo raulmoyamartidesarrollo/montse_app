@@ -11,6 +11,11 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import {
+  registerWithEmail,
+  loginWithEmail,
+  resetPassword,
+} from './src/services/auth';
 
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -41,24 +46,40 @@ export default function App() {
 }
 
 function LoginScreen() {
+
   const { width, height } = useWindowDimensions();
+
   const insets = useSafeAreaInsets();
 
-  // Altura útil disponible dentro de las zonas seguras del dispositivo.
+  const [mode, setMode] = useState<ScreenMode>('login');
+
   const availableHeight = Math.max(
+
     0,
+
     height - insets.top - insets.bottom
+
   );
 
   const isVeryShortScreen = availableHeight < 650;
+
   const isShortScreen = availableHeight < 750;
+
   const isCompact = width < 380;
+
   const isTablet = width >= 600;
 
+  const isRegisterScreen = mode === 'register';
+
+  const isDenseLayout =
+
+    isVeryShortScreen || (isRegisterScreen && isShortScreen);
+
   const horizontalPadding = isCompact ? 16 : 20;
+
   const contentMaxWidth = isTablet ? 440 : 480;
 
-  const [mode, setMode] = useState<ScreenMode>('login');
+  
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -68,7 +89,7 @@ function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const [loading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
   const [fontsLoaded] = useFonts({
@@ -85,6 +106,8 @@ function LoginScreen() {
     isTablet,
     isShortScreen,
     isVeryShortScreen,
+    isRegisterScreen,
+    isDenseLayout,
   });
 
   const resetFields = () => {
@@ -98,46 +121,116 @@ function LoginScreen() {
     resetFields();
   };
 
-  const handleSubmit = () => {
-    setMessage('');
+  const handleSubmit = async () => {
+  setMessage('');
 
-    if (!email.trim()) {
-      setMessage('Introduce tu correo electrónico.');
-      return;
-    }
+  const normalizedEmail = email.trim().toLowerCase();
 
-    if (mode === 'register' && !name.trim()) {
-      setMessage('Introduce tu nombre completo.');
-      return;
-    }
+  if (!normalizedEmail) {
+    setMessage('Introduce tu correo electrónico.');
+    return;
+  }
 
-    if (mode !== 'forgot' && !password) {
-      setMessage('Introduce tu contraseña.');
-      return;
-    }
+  if (mode === 'register' && !name.trim()) {
+    setMessage('Introduce tu nombre completo.');
+    return;
+  }
 
-    if (mode === 'register' && password.length < 8) {
-      setMessage('La contraseña debe tener al menos 8 caracteres.');
-      return;
-    }
+  if (mode !== 'forgot' && !password) {
+    setMessage('Introduce tu contraseña.');
+    return;
+  }
 
-    if (mode === 'register' && password !== confirmPassword) {
-      setMessage('Las contraseñas no coinciden.');
+  if (mode === 'register' && password.length < 8) {
+    setMessage('La contraseña debe tener al menos 8 caracteres.');
+    return;
+  }
+
+  if (mode === 'register' && password !== confirmPassword) {
+    setMessage('Las contraseñas no coinciden.');
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    if (mode === 'register') {
+        await registerWithEmail(
+          name.trim(),
+          normalizedEmail,
+          password
+        );
+
+        setMessage('¡Cuenta creada correctamente!');
+        return;
+      }
+
+    if (mode === 'login') {
+      await loginWithEmail(
+        normalizedEmail,
+        password
+      );
+
+      setMessage('¡Has iniciado sesión correctamente!');
       return;
     }
 
     if (mode === 'forgot') {
+      await resetPassword(normalizedEmail);
+
       setMessage(
-        'La recuperación de contraseña estará disponible cuando conectemos Firebase.'
+        'Si existe una cuenta asociada a ese correo, recibirás las instrucciones para recuperar tu contraseña.'
       );
-      return;
     }
+  } catch (error: unknown) {
+    const errorCode =
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error
+        ? String(error.code)
+        : '';
 
-    setMessage(
-      'La autenticación todavía no está conectada. El siguiente paso será configurar Firebase.'
-    );
-  };
+    switch (errorCode) {
+      case 'auth/email-already-in-use':
+        setMessage('Este correo electrónico ya está registrado.');
+        break;
 
+      case 'auth/invalid-email':
+        setMessage('El correo electrónico no tiene un formato válido.');
+        break;
+
+      case 'auth/weak-password':
+        setMessage('La contraseña es demasiado débil.');
+        break;
+
+      case 'auth/invalid-credential':
+      case 'auth/wrong-password':
+      case 'auth/user-not-found':
+        setMessage('El correo o la contraseña no son correctos.');
+        break;
+
+      case 'auth/too-many-requests':
+        setMessage(
+          'Demasiados intentos. Espera un momento antes de volver a intentarlo.'
+        );
+        break;
+
+      case 'auth/network-request-failed':
+        setMessage(
+          'No se ha podido conectar. Comprueba tu conexión a Internet.'
+        );
+        break;
+
+      default:
+        setMessage(
+          'No se ha podido completar la operación. Inténtalo de nuevo.'
+        );
+        console.error('Error de autenticación:', error);
+    }
+  } finally {
+    setLoading(false);
+  }
+};
   const handleSocialLogin = (provider: 'Google' | 'Apple') => {
     setMessage(
       `El acceso con ${provider} estará disponible cuando configuremos la autenticación.`
@@ -210,7 +303,7 @@ function LoginScreen() {
               <Text style={styles.brandName}>MONTSE ÁLVAREZ</Text>
 
               <Text style={styles.brandCaption}>
-                MOVIMIENTO · EQUILIBRIO · BIENESTAR
+                OSTEOPATÍA · MASAJE · BIENESTAR
               </Text>
             </View>
 
@@ -462,24 +555,7 @@ function LoginScreen() {
                       <Text style={styles.socialButtonText}>Google</Text>
                     </Pressable>
 
-                    {Platform.OS === 'ios' && (
-                      <Pressable
-                        onPress={() => handleSocialLogin('Apple')}
-                        style={({ pressed }) => [
-                          styles.socialButton,
-                          pressed && styles.socialButtonPressed,
-                        ]}
-                        accessibilityRole="button"
-                      >
-                        <Ionicons
-                          name="logo-apple"
-                          size={21}
-                          color={colors.text}
-                        />
-
-                        <Text style={styles.socialButtonText}>Apple</Text>
-                      </Pressable>
-                    )}
+                   
                   </View>
                 </>
               )}
@@ -540,6 +616,8 @@ type LayoutOptions = {
   isTablet: boolean;
   isShortScreen: boolean;
   isVeryShortScreen: boolean;
+  isRegisterScreen: boolean;
+  isDenseLayout: boolean;
 };
 
 function createStyles({
@@ -549,6 +627,8 @@ function createStyles({
   isTablet,
   isShortScreen,
   isVeryShortScreen,
+   isRegisterScreen,
+  isDenseLayout,
 }: LayoutOptions) {
   return StyleSheet.create({
     safeArea: {
@@ -575,8 +655,8 @@ function createStyles({
       maxWidth: isTablet ? 760 : undefined,
       alignSelf: 'center',
       paddingHorizontal: horizontalPadding,
-      paddingTop: isVeryShortScreen ? 6 : isShortScreen ? 10 : 20,
-      paddingBottom: isVeryShortScreen ? 8 : 16,
+      paddingTop: isDenseLayout ? 6 : isShortScreen ? 10 : 20,
+      paddingBottom: isDenseLayout ? 6 : 16,
     },
 
     loadingScreen: {
@@ -588,17 +668,17 @@ function createStyles({
 
     brand: {
       alignItems: 'center',
-      marginBottom: isVeryShortScreen ? 8 : isShortScreen ? 12 : 20,
+      marginBottom: isDenseLayout ? 6 : isShortScreen ? 12 : 20,
     },
 
     logo: {
-      width: isVeryShortScreen ? 40 : isShortScreen ? 48 : 60,
-      height: isVeryShortScreen ? 40 : isShortScreen ? 48 : 60,
-      borderRadius: isVeryShortScreen ? 14 : 20,
+      width: isDenseLayout ? 36 : isShortScreen ? 48 : 60,
+      height: isDenseLayout ? 36 : isShortScreen ? 48 : 60,
+      borderRadius: isDenseLayout ? 12 : 20,
       backgroundColor: colors.primary,
       alignItems: 'center',
       justifyContent: 'center',
-      marginBottom: isVeryShortScreen ? 5 : 8,
+      marginBottom: isDenseLayout ? 4 : 8,
     },
 
     brandName: {
@@ -626,7 +706,7 @@ function createStyles({
       borderRadius: 24,
       borderWidth: 1,
       borderColor: colors.surfaceBorder,
-      padding: isVeryShortScreen ? 14 : isCompact ? 18 : 24,
+      padding: isDenseLayout ? 12 : isCompact ? 18 : 24,
       shadowColor: '#2B2824',
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.04,
@@ -635,7 +715,7 @@ function createStyles({
     },
 
     intro: {
-      marginBottom: isVeryShortScreen ? 12 : 20,
+      marginBottom: isDenseLayout ? 8 : 20,
     },
 
     welcomeBadge: {
@@ -674,34 +754,34 @@ function createStyles({
     },
 
     fieldGroup: {
-      marginBottom: isVeryShortScreen ? 10 : 14,
+        marginBottom: isDenseLayout ? 7 : 14,
     },
 
     label: {
       fontFamily: 'PlusJakartaSans_600SemiBold',
       fontSize: 13,
-      lineHeight: 19,
+      lineHeight: 18,
       color: colors.text,
-      marginBottom: 8,
+      marginBottom: isDenseLayout ? 4 : 8,
     },
 
     inputContainer: {
-      minHeight: 52,
+      minHeight: isDenseLayout ? 44 : 52,
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: colors.background,
       borderWidth: 1,
       borderColor: colors.surfaceBorder,
       borderRadius: 14,
-      paddingHorizontal: 14,
+      paddingHorizontal: 12,
       gap: 10,
     },
 
     input: {
       flex: 1,
       minWidth: 0,
-      minHeight: 50,
-      paddingVertical: 12,
+      minHeight: isDenseLayout ? 42 : 50,
+      paddingVertical: isDenseLayout ? 8 : 12,
       fontFamily: 'PlusJakartaSans_400Regular',
       fontSize: 14,
       color: colors.text,
@@ -746,17 +826,17 @@ function createStyles({
     },
 
     primaryButton: {
-      minHeight: 52,
-      width: '100%',
-      backgroundColor: colors.primary,
-      borderRadius: 999,
-      paddingHorizontal: 22,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 12,
-      marginTop: 4,
-    },
+  minHeight: 48,
+  width: '100%',
+  backgroundColor: colors.primary,
+  borderRadius: 999,
+  paddingHorizontal: 22,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 12,
+  marginTop: 2,
+},
 
     primaryButtonPressed: {
       backgroundColor: colors.primaryPressed,
@@ -773,11 +853,11 @@ function createStyles({
       color: colors.onPrimary,
     },
 
-    divider: {
+   divider: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
-      marginVertical: isVeryShortScreen ? 10 : 18,
+      marginVertical: isDenseLayout ? 8 : 18,
     },
 
     dividerLine: {
