@@ -16,6 +16,7 @@ import {
   loginWithEmail,
   resetPassword,
 } from './src/services/auth';
+import { loginWithGoogle } from './src/services/googleAuth';
 
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -231,11 +232,77 @@ function LoginScreen() {
     setLoading(false);
   }
 };
-  const handleSocialLogin = (provider: 'Google' | 'Apple') => {
+const handleSocialLogin = async (
+  provider: 'Google' | 'Apple'
+) => {
+  if (loading) {
+    return;
+  }
+
+  if (provider === 'Apple') {
     setMessage(
-      `El acceso con ${provider} estará disponible cuando configuremos la autenticación.`
+      'El acceso con Apple estará disponible próximamente.'
     );
-  };
+    return;
+  }
+
+  setMessage('');
+
+  try {
+    setLoading(true);
+
+    const user = await loginWithGoogle();
+
+    if (!user) {
+      // El usuario ha cancelado el selector de Google.
+      return;
+    }
+
+    console.log('Google Sign-In correcto:', user.uid);
+
+    setMessage(
+      `¡Bienvenido${user.displayName ? `, ${user.displayName}` : ''}! Has iniciado sesión con Google.`
+    );
+  } catch (error: unknown) {
+    console.error('Error Google Sign-In:', error);
+
+    const errorCode =
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error
+        ? String(error.code)
+        : '';
+
+    switch (errorCode) {
+      case 'auth/account-exists-with-different-credential':
+        setMessage(
+          'Ya existe una cuenta con este correo. Accede con tu método habitual.'
+        );
+        break;
+
+      case 'auth/network-request-failed':
+        setMessage(
+          'No se ha podido conectar. Comprueba tu conexión a Internet.'
+        );
+        break;
+
+      case 'auth/too-many-requests':
+        setMessage(
+          'Demasiados intentos. Inténtalo de nuevo más tarde.'
+        );
+        break;
+
+      default:
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : 'No se ha podido iniciar sesión con Google.'
+        );
+    }
+  } finally {
+    setLoading(false);
+  }
+};
 
   const isForgot = mode === 'forgot';
   const isRegister = mode === 'register';
@@ -539,13 +606,16 @@ function LoginScreen() {
 
                   <View style={styles.socialButtons}>
                     <Pressable
-                      onPress={() => handleSocialLogin('Google')}
-                      style={({ pressed }) => [
-                        styles.socialButton,
-                        pressed && styles.socialButtonPressed,
-                      ]}
-                      accessibilityRole="button"
-                    >
+                        onPress={() => handleSocialLogin('Google')}
+                        disabled={loading}
+                        style={({ pressed }) => [
+                          styles.socialButton,
+                          pressed && styles.socialButtonPressed,
+                          loading && styles.buttonDisabled,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Continuar con Google"
+                      >
                       <Ionicons
                         name="logo-google"
                         size={19}

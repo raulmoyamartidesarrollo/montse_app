@@ -1,15 +1,18 @@
 {
   "expo": {
-    "name": "fisioapp-temp",
-    "slug": "fisioapp-temp",
+    "name": "MontseApp",
+    "slug": "montseapp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "scheme": "montseapp",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.montseapp.mobile"
     },
     "android": {
+      "package": "com.montseapp.mobile",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -23,7 +26,15 @@
     },
     "plugins": [
       "expo-status-bar",
-      "expo-font"
+      "expo-font",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.641763515548-f6v9oh7r6okomuvreqdr89ug3j2r2fdg"
+        }
+      ],
+      "expo-dev-client",
+      "./plugins/withNonModularHeaders"
     ]
   }
 }
