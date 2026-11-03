@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Configuración del proyecto Firebase
 const firebaseConfig = {
-  apiKey: 'AIzaSyCCDCIlWJPoekuhsDJcBraee-VwyvZEjLA',
+  apiKey: 'AIzaSyA0ngq-Y9yzZ7Q_y_PDAJbImFrjCtm7Z0E',
   authDomain: 'montseapp-302eb.firebaseapp.com',
   projectId: 'montseapp-302eb',
   storageBucket: 'montseapp-302eb.firebasestorage.app',
@@ -15,6 +15,7 @@ const firebaseConfig = {
 
 // Inicializar Firebase una sola vez
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+
 
 // Firebase 13.1.0 incluye getReactNativePersistence en su entrada
 // para React Native, pero sus tipos públicos no la exponen.

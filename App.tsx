@@ -155,15 +155,15 @@ function LoginScreen() {
     setLoading(true);
 
     if (mode === 'register') {
-      await registerWithEmail(
-        normalizedEmail,
-        password,
-        name.trim()
-      );
+        await registerWithEmail(
+          name.trim(),
+          normalizedEmail,
+          password
+        );
 
-      setMessage('¡Cuenta creada correctamente!');
-      return;
-    }
+        setMessage('¡Cuenta creada correctamente!');
+        return;
+      }
 
     if (mode === 'login') {
       await loginWithEmail(
