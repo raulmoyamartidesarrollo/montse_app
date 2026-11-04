@@ -26,16 +26,22 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-status-bar",
-      "expo-font",
-      [
-        "@react-native-google-signin/google-signin",
-        {
-          "iosUrlScheme": "com.googleusercontent.apps.641763515548-f6v9oh7r6okomuvreqdr89ug3j2r2fdg"
-        }
-      ],
-      "expo-dev-client",
-      "./plugins/withNonModularHeaders"
-    ]
+  "expo-status-bar",
+  "expo-font",
+  [
+    "expo-splash-screen",
+    {
+      "backgroundColor": "#FFF8F3",
+    }
+  ],
+  [
+    "@react-native-google-signin/google-signin",
+    {
+      "iosUrlScheme": "com.googleusercontent.apps.641763515548-f6v9oh7r6okomuvreqdr89ug3j2r2fdg"
+    }
+  ],
+  "expo-dev-client",
+  "./plugins/withNonModularHeaders"
+]
   }
 }
