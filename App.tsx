@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -15,6 +16,7 @@ import {
   registerWithEmail,
   loginWithEmail,
   resetPassword,
+  observeAuthState,
 } from './src/services/auth';
 import { loginWithGoogle } from './src/services/googleAuth';
 
@@ -33,15 +35,91 @@ import {
   PlusJakartaSans_600SemiBold,
   PlusJakartaSans_700Bold,
 } from '@expo-google-fonts/plus-jakarta-sans';
+import type { User } from 'firebase/auth';
 
 import { colors } from './src/theme/colors';
+import SplashScreen from './src/screen/SplashScreen';
 
 type ScreenMode = 'login' | 'register' | 'forgot';
 
+const SPLASH_DURATION = 1500;
+const PROGRESS_INTERVAL = 16;
+
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({
+    PlusJakartaSans_400Regular,
+    PlusJakartaSans_500Medium,
+    PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold,
+  });
+
+  const [authReady, setAuthReady] = useState(false);
+  const [, setCurrentUser] = useState<User | null>(null);
+
+  const [progress, setProgress] = useState(0);
+  const [minimumTimeElapsed, setMinimumTimeElapsed] = useState(false);
+
+  const startTime = useRef<number>(Date.now());
+
+  // 1. Recuperar la sesión de Firebase
+  useEffect(() => {
+    const unsubscribe = observeAuthState((user) => {
+      setCurrentUser(user);
+      setAuthReady(true);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  // 2. Animar el porcentaje durante 1,5 segundos
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startTime.current;
+
+      const percentage = Math.min(
+        100,
+        (elapsed / SPLASH_DURATION) * 100
+      );
+
+      setProgress(percentage);
+
+      if (elapsed >= SPLASH_DURATION) {
+        setProgress(100);
+        setMinimumTimeElapsed(true);
+        clearInterval(interval);
+      }
+    }, PROGRESS_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // 3. Comprobar que todos los procesos han terminado
+  const resourcesReady = fontsLoaded || !!fontError;
+
+  const appReady =
+    resourcesReady &&
+    authReady &&
+    minimumTimeElapsed;
+
+  // 4. Determinar el mensaje de progreso
+  const splashStatus = !resourcesReady
+    ? 'Preparando aplicación...'
+    : !authReady
+      ? 'Comprobando sesión...'
+      : progress < 100
+        ? 'Preparando tu experiencia...'
+        : '¡Todo listo!';
+
   return (
     <SafeAreaProvider>
-      <LoginScreen />
+      {!appReady ? (
+        <SplashScreen
+          progress={progress}
+          status={splashStatus}
+        />
+      ) : (
+        <LoginScreen />
+      )}
     </SafeAreaProvider>
   );
 }
@@ -93,12 +171,7 @@ function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
-  const [fontsLoaded] = useFonts({
-    PlusJakartaSans_400Regular,
-    PlusJakartaSans_500Medium,
-    PlusJakartaSans_600SemiBold,
-    PlusJakartaSans_700Bold,
-  });
+
 
   const styles = createStyles({
     horizontalPadding,
@@ -325,14 +398,7 @@ const handleSocialLogin = async (
       ? 'Crear cuenta'
       : 'Iniciar sesión';
 
-  if (!fontsLoaded) {
-    return (
-      <SafeAreaView style={styles.loadingScreen}>
-        <StatusBar style="dark" />
-        <ActivityIndicator size="large" color={colors.primary} />
-      </SafeAreaView>
-    );
-  }
+
 
   return (
     <SafeAreaView
