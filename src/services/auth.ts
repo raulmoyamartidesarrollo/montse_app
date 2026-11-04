@@ -7,6 +7,7 @@ import {
   onAuthStateChanged,
   type User,
 } from 'firebase/auth';
+import { ensureUserProfile } from './users';
 
 import { auth } from '../lib/firebase';
 
@@ -21,15 +22,20 @@ export async function registerWithEmail(
   const cleanName = name.trim();
   const cleanEmail = email.trim().toLowerCase();
 
+  // 1. Crear usuario en Firebase Authentication.
   const credential = await createUserWithEmailAndPassword(
     auth,
     cleanEmail,
     password,
   );
 
+  // 2. Guardar su nombre.
   await updateProfile(credential.user, {
     displayName: cleanName,
   });
+
+  // 3. Crear su perfil en Firestore.
+  await ensureUserProfile();
 
   return credential.user;
 }
@@ -48,6 +54,10 @@ export async function loginWithEmail(
     cleanEmail,
     password,
   );
+
+  // Crear el perfil si el usuario ya existía
+  // en Authentication pero no en Firestore.
+  await ensureUserProfile();
 
   return credential.user;
 }

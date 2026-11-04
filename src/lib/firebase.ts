@@ -1,7 +1,8 @@
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import * as FirebaseAuth from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
+import { getFunctions } from 'firebase/functions';
+import { getFirestore } from 'firebase/firestore';
 // Configuración del proyecto Firebase
 const firebaseConfig = {
   apiKey: 'AIzaSyA0ngq-Y9yzZ7Q_y_PDAJbImFrjCtm7Z0E',
@@ -51,4 +52,9 @@ function initializeFirebaseAuth() {
 }
 
 export const auth = initializeFirebaseAuth();
+
+export const db = getFirestore(app, 'default');
+
+export const functions = getFunctions(app, 'europe-west1');
+
 export { app };
