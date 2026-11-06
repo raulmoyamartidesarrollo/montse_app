@@ -1,8 +1,24 @@
 import { httpsCallable } from 'firebase/functions';
-import { doc, getDoc, type DocumentData } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 
 import { functions, db } from '../lib/firebase';
 
+/**
+ * Roles disponibles en MontseApp.
+ *
+ * admin y owner tienen las mismas
+ * funcionalidades administrativas.
+ */
+export type UserRole =
+  | 'client'
+  | 'worker'
+  | 'admin'
+  | 'owner'
+  | 'developer';
+
+/**
+ * Datos del perfil de usuario.
+ */
 export interface UserProfile {
   uid: string;
   name: string;
@@ -11,7 +27,11 @@ export interface UserProfile {
   phone: string;
   photoURL: string;
 
-  roles: Array<'client' | 'worker' | 'admin'>;
+  roles: UserRole[];
+
+  centerId?: string;
+
+  activationOnboardingCompleted?: boolean;
 
   notificationsEnabled: boolean;
 
@@ -26,8 +46,10 @@ export interface UserProfile {
 }
 
 /**
- * Crea el perfil de usuario desde Cloud Functions
- * únicamente si todavía no existe.
+ * Crea el perfil del usuario autenticado
+ * mediante Firebase Cloud Functions.
+ *
+ * Si ya existe, conserva sus roles.
  */
 export async function ensureUserProfile(): Promise<void> {
   const callable = httpsCallable<
@@ -39,7 +61,7 @@ export async function ensureUserProfile(): Promise<void> {
 }
 
 /**
- * Obtiene el perfil del usuario autenticado.
+ * Recupera el perfil del usuario desde Firestore.
  */
 export async function getUserProfile(
   uid: string
@@ -53,4 +75,81 @@ export async function getUserProfile(
   }
 
   return snapshot.data() as UserProfile;
+}
+
+/**
+ * Comprueba si el usuario puede acceder
+ * al panel de administración.
+ *
+ * admin y owner tienen exactamente
+ * las mismas funcionalidades.
+ */
+export function hasAdminAccess(
+  roles: UserRole[] = []
+): boolean {
+  return roles.includes('admin') || roles.includes('owner');
+}
+
+/**
+ * Comprueba si el usuario es profesional
+ * de la clínica.
+ */
+export function isWorker(
+  roles: UserRole[] = []
+): boolean {
+  return roles.includes('worker');
+}
+
+/**
+ * Identifica una cuenta de desarrollador.
+ *
+ * El rol developer no concede por sí solo
+ * permisos para consultar historiales clínicos.
+ */
+export function isDeveloper(
+  roles: UserRole[] = []
+): boolean {
+  return roles.includes('developer');
+}
+/**
+ * Activa una cuenta administrativa mediante
+ * un código de activación.
+ */
+export async function activateAccountWithCode(
+  code: string
+): Promise<{
+  success: boolean;
+  role: 'owner' | 'developer';
+  centerId: string;
+}> {
+  const callable = httpsCallable<
+    { code: string },
+    {
+      success: boolean;
+      role: 'owner' | 'developer';
+      centerId: string;
+    }
+  >(functions, 'activateAccountWithCode');
+
+  const result = await callable({ code: code.trim() });
+
+  return result.data;
+}
+
+/**
+ * Marca como completado el proceso inicial
+ * de activación del usuario.
+ *
+ * No modifica roles ni permisos.
+ */
+export async function completeActivationOnboarding(): Promise<void> {
+  const callable = httpsCallable<
+    Record<string, never>,
+    {
+      success: boolean;
+      activationOnboardingCompleted: boolean;
+    }
+  >(functions, 'completeActivationOnboarding');
+
+  await callable({});
 }

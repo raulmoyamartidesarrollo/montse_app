@@ -39,6 +39,13 @@ import type { User } from 'firebase/auth';
 
 import { colors } from './src/theme/colors';
 import SplashScreen from './src/screen/SplashScreen';
+import ActivationCodeScreen from './src/screen/ActivationCodeScreen';
+import {
+  ensureUserProfile,
+  getUserProfile,
+  hasAdminAccess,
+  type UserProfile,
+} from './src/services/users';
 
 type ScreenMode = 'login' | 'register' | 'forgot';
 
@@ -54,14 +61,18 @@ export default function App() {
   });
 
   const [authReady, setAuthReady] = useState(false);
-  const [, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileError, setProfileError] = useState('');
 
   const [progress, setProgress] = useState(0);
   const [minimumTimeElapsed, setMinimumTimeElapsed] = useState(false);
 
   const startTime = useRef<number>(Date.now());
 
-  // 1. Recuperar la sesión de Firebase
+  // Recuperar sesión Firebase.
   useEffect(() => {
     const unsubscribe = observeAuthState((user) => {
       setCurrentUser(user);
@@ -71,7 +82,56 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  // 2. Animar el porcentaje durante 1,5 segundos
+  // Cargar el perfil correspondiente a la sesión.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProfile() {
+      setProfile(null);
+      setProfileError('');
+
+      if (!currentUser) {
+        setProfileLoading(false);
+        return;
+      }
+
+      setProfileLoading(true);
+
+      try {
+        await ensureUserProfile();
+
+        const userProfile = await getUserProfile(currentUser.uid);
+
+        if (!userProfile) {
+          throw new Error('No se ha encontrado el perfil del usuario.');
+        }
+
+        if (!cancelled) {
+          setProfile(userProfile);
+        }
+      } catch (error) {
+        console.error('Error cargando perfil:', error);
+
+        if (!cancelled) {
+          setProfileError(
+            'No hemos podido cargar tu perfil. Comprueba la conexión e inténtalo de nuevo.'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setProfileLoading(false);
+        }
+      }
+    }
+
+    loadProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.uid]);
+
+  // Splash durante al menos 1,5 segundos.
   useEffect(() => {
     const interval = setInterval(() => {
       const elapsed = Date.now() - startTime.current;
@@ -93,34 +153,211 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // 3. Comprobar que todos los procesos han terminado
+  // Recargar perfil después de completar la activación.
+  const refreshProfile = async () => {
+    if (!currentUser) {
+      return;
+    }
+
+    const updatedProfile = await getUserProfile(currentUser.uid);
+
+    if (!updatedProfile) {
+      throw new Error('No se ha encontrado el perfil actualizado.');
+    }
+
+    setProfile(updatedProfile);
+  };
+
   const resourcesReady = fontsLoaded || !!fontError;
 
   const appReady =
     resourcesReady &&
     authReady &&
+    !profileLoading &&
     minimumTimeElapsed;
 
-  // 4. Determinar el mensaje de progreso
   const splashStatus = !resourcesReady
     ? 'Preparando aplicación...'
     : !authReady
       ? 'Comprobando sesión...'
-      : progress < 100
-        ? 'Preparando tu experiencia...'
-        : '¡Todo listo!';
+      : profileLoading
+        ? 'Cargando tu perfil...'
+        : progress < 100
+          ? 'Preparando tu experiencia...'
+          : '¡Todo listo!';
 
-  return (
-    <SafeAreaProvider>
-      {!appReady ? (
+  const renderScreen = () => {
+    if (!appReady) {
+      return (
         <SplashScreen
           progress={progress}
           status={splashStatus}
         />
-      ) : (
-        <LoginScreen />
-      )}
+      );
+    }
+
+    // Sin sesión: login.
+    if (!currentUser) {
+      return <LoginScreen />;
+    }
+
+    // Error al recuperar el perfil.
+    if (profileError || !profile) {
+      return (
+        <SafeAreaView
+          style={{
+            flex: 1,
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 24,
+            backgroundColor: colors.background,
+          }}
+        >
+          <Ionicons
+            name="alert-circle-outline"
+            size={48}
+            color={colors.primary}
+          />
+
+          <Text
+            style={{
+              marginTop: 18,
+              textAlign: 'center',
+              fontSize: 16,
+              color: colors.text,
+            }}
+          >
+            {profileError || 'No se ha encontrado tu perfil.'}
+          </Text>
+
+          <Pressable
+            onPress={async () => {
+              setProfileLoading(true);
+              setProfileError('');
+
+              try {
+                await ensureUserProfile();
+                await refreshProfile();
+              } catch {
+                setProfileError(
+                  'No hemos podido recuperar tu perfil.'
+                );
+              } finally {
+                setProfileLoading(false);
+              }
+            }}
+            style={{
+              marginTop: 24,
+              backgroundColor: colors.primary,
+              paddingHorizontal: 24,
+              paddingVertical: 14,
+              borderRadius: 999,
+            }}
+          >
+            <Text style={{ color: colors.onPrimary }}>
+              Reintentar
+            </Text>
+          </Pressable>
+        </SafeAreaView>
+      );
+    }
+
+    // Primera entrada: activación.
+    if (profile.activationOnboardingCompleted !== true) {
+      return (
+        <ActivationCodeScreen
+          onContinueWithoutCode={refreshProfile}
+          onActivationSuccess={refreshProfile}
+        />
+      );
+    }
+
+    // Pantalla provisional de administración.
+    if (hasAdminAccess(profile.roles)) {
+      return (
+        <TemporaryHomeScreen
+          title="Panel de administración"
+          description="Aquí construiremos la agenda, pacientes, servicios y configuración de la clínica."
+        />
+      );
+    }
+
+    // Pantalla provisional de pacientes.
+    return (
+      <TemporaryHomeScreen
+        title="Bienvenido a MontseApp"
+        description="Aquí construiremos la reserva de citas, especialistas y gestión del perfil."
+      />
+    );
+  };
+
+  return (
+    <SafeAreaProvider>
+      {renderScreen()}
     </SafeAreaProvider>
+  );
+}
+function TemporaryHomeScreen({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <SafeAreaView
+      style={{
+        flex: 1,
+        backgroundColor: colors.background,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 30,
+      }}
+    >
+      <StatusBar style="dark" />
+
+      <Ionicons
+        name="heart-circle-outline"
+        size={70}
+        color={colors.primary}
+      />
+
+      <Text
+        style={{
+          fontFamily: 'PlusJakartaSans_700Bold',
+          fontSize: 24,
+          color: colors.text,
+          textAlign: 'center',
+          marginTop: 20,
+        }}
+      >
+        {title}
+      </Text>
+
+      <Text
+        style={{
+          fontFamily: 'PlusJakartaSans_400Regular',
+          fontSize: 14,
+          lineHeight: 23,
+          color: colors.textSecondary,
+          textAlign: 'center',
+          marginTop: 12,
+        }}
+      >
+        {description}
+      </Text>
+
+      <Text
+        style={{
+          fontFamily: 'PlusJakartaSans_500Medium',
+          fontSize: 12,
+          color: colors.textMuted,
+          marginTop: 25,
+        }}
+      >
+        Pantalla en desarrollo
+      </Text>
+    </SafeAreaView>
   );
 }
 
