@@ -5,7 +5,7 @@ import {
   isErrorWithCode,
   statusCodes,
 } from '@react-native-google-signin/google-signin';
-
+import { ensureUserProfile } from './users';
 import {
   GoogleAuthProvider,
   signInWithCredential,
@@ -51,11 +51,14 @@ export async function loginWithGoogle(): Promise<User | null> {
     const credential = GoogleAuthProvider.credential(idToken);
 
     const firebaseCredential = await signInWithCredential(
-      auth,
-      credential
-    );
+  auth,
+  credential
+);
 
-    return firebaseCredential.user;
+// Crear el perfil si todavía no existe.
+await ensureUserProfile();
+
+return firebaseCredential.user;
   } catch (error: unknown) {
     if (isErrorWithCode(error)) {
       if (error.code === statusCodes.SIGN_IN_CANCELLED) {
