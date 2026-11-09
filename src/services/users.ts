@@ -153,3 +153,24 @@ export async function completeActivationOnboarding(): Promise<void> {
 
   await callable({});
 }
+/**
+ * Consulta si Montse ya ha activado su cuenta
+ * como propietaria del centro.
+ *
+ * Devuelve:
+ * - true: Montse ya está activada.
+ * - false: Montse todavía no está activada.
+ *
+ * Si Firebase devuelve un error, lo propagamos
+ * para no confundirlo con una cuenta sin activar.
+ */
+export async function getCenterActivationStatus(): Promise<boolean> {
+  const callable = httpsCallable<
+    Record<string, never>,
+    { ownerActivated: boolean }
+  >(functions, 'getCenterActivationStatus');
+
+  const response = await callable({});
+
+  return response.data.ownerActivated === true;
+}

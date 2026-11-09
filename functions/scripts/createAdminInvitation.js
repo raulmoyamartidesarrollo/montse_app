@@ -20,6 +20,7 @@ db.settings({
 const CENTER_ID = "montse-main";
 
 const VALID_ROLES = ["owner", "developer"];
+const INVITATION_DURATION_DAYS = 30;
 
 // ==========================================
 // GENERACIÓN DEL CÓDIGO
@@ -49,7 +50,19 @@ function hashCode(code) {
 // ==========================================
 
 async function createAdminInvitation() {
-  const [, , role] = process.argv;
+  const [, , role, email] = process.argv;
+
+if (!email || typeof email !== "string") {
+  throw new Error(
+    "Debes indicar el correo electrónico del destinatario."
+  );
+}
+
+const allowedEmail = email.trim().toLowerCase();
+
+if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(allowedEmail)) {
+  throw new Error("El correo electrónico no es válido.");
+}
 
   if (!VALID_ROLES.includes(role)) {
     throw new Error(
@@ -75,7 +88,11 @@ async function createAdminInvitation() {
   }
 
   const code = generateActivationCode(role);
-  const codeHash = hashCode(code);
+    const codeHash = hashCode(code);
+
+    const expiresAt = admin.firestore.Timestamp.fromMillis(
+    Date.now() + INVITATION_DURATION_DAYS * 24 * 60 * 60 * 1000
+    );
 
   // Transacción para evitar generar dos
   // invitaciones para el mismo rol.
@@ -109,15 +126,18 @@ async function createAdminInvitation() {
 
     transaction.set(invitationRef, {
       role,
-      centerId: CENTER_ID,
+        centerId: CENTER_ID,
 
-      // Solo almacenamos el hash.
-      codeHash,
+        // Correo autorizado para utilizar esta invitación.
+        allowedEmail,
 
-      status: "pending",
+        // Solo almacenamos el hash del código.
+        codeHash,
 
-      // Sin fecha de caducidad.
-      expiresAt: null,
+        status: "pending",
+
+        // Caducidad de 30 días.
+        expiresAt,
 
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
 
@@ -149,7 +169,11 @@ async function createAdminInvitation() {
   console.log("\nCÓDIGO DE ACTIVACIÓN:\n");
   console.log(code);
 
-  console.log("\nCaducidad: SIN CADUCIDAD");
+  console.log("Correo autorizado:", allowedEmail);
+console.log(
+  "Caducidad:",
+  expiresAt.toDate().toLocaleString("es-ES")
+);
   console.log("Usos permitidos: 1");
 
   console.log("\nIMPORTANTE:");

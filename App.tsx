@@ -9,8 +9,10 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
   useWindowDimensions,
   View,
+    AppState,
 } from 'react-native';
 import {
   registerWithEmail,
@@ -43,6 +45,7 @@ import ActivationCodeScreen from './src/screen/ActivationCodeScreen';
 import {
   ensureUserProfile,
   getUserProfile,
+  getCenterActivationStatus,
   hasAdminAccess,
   type UserProfile,
 } from './src/services/users';
@@ -69,6 +72,10 @@ export default function App() {
 
   const [progress, setProgress] = useState(0);
   const [minimumTimeElapsed, setMinimumTimeElapsed] = useState(false);
+  const [showAdminActivation, setShowAdminActivation] = useState(false);
+  // Estado de activación de la propietaria.
+// null significa que todavía no hemos podido verificarlo.
+const [ownerActivated, setOwnerActivated] = useState<boolean | null>(null);
 
   const startTime = useRef<number>(Date.now());
 
@@ -130,6 +137,66 @@ export default function App() {
       cancelled = true;
     };
   }, [currentUser?.uid]);
+  // Consultar si Montse ya ha activado su cuenta.
+// Se actualiza al iniciar sesión y cuando la app
+// vuelve a primer plano.
+useEffect(() => {
+  if (!currentUser) {
+    setOwnerActivated(null);
+    setShowAdminActivation(false);
+    return;
+  }
+
+  let cancelled = false;
+  let requestId = 0;
+
+  const loadCenterStatus = async () => {
+    const currentRequest = ++requestId;
+
+    // Ocultamos el botón mientras comprobamos el estado.
+    setOwnerActivated(null);
+
+    try {
+      const activated = await getCenterActivationStatus();
+
+      if (!cancelled && currentRequest === requestId) {
+        setOwnerActivated(activated);
+
+        if (activated) {
+          setShowAdminActivation(false);
+        }
+      }
+    } catch (error) {
+      console.error(
+        'Error consultando activación del centro:',
+        error
+      );
+
+      if (!cancelled && currentRequest === requestId) {
+        // Un error de conexión nunca se interpreta
+        // como una propietaria sin activar.
+        setOwnerActivated(null);
+      }
+    }
+  };
+
+  void loadCenterStatus();
+
+  const subscription = AppState.addEventListener(
+    'change',
+    (state) => {
+      if (state === 'active') {
+        void loadCenterStatus();
+      }
+    }
+  );
+
+  return () => {
+    cancelled = true;
+    requestId++;
+    subscription.remove();
+  };
+}, [currentUser?.uid]);
 
   // Splash durante al menos 1,5 segundos.
   useEffect(() => {
@@ -271,6 +338,24 @@ export default function App() {
         />
       );
     }
+    // Permitir introducir un código administrativo
+    // desde una cuenta que ya completó el registro.
+    if (showAdminActivation && ownerActivated === false) {
+      return (
+        <ActivationCodeScreen
+          onActivationSuccess={async () => {
+            await refreshProfile();
+            setShowAdminActivation(false);
+          }}
+          onContinueWithoutCode={() => {
+            setShowAdminActivation(false);
+          }}
+          onBack={() => {
+            setShowAdminActivation(false);
+          }}
+        />
+      );
+    }
 
     // Pantalla provisional de administración.
     if (hasAdminAccess(profile.roles)) {
@@ -282,13 +367,18 @@ export default function App() {
       );
     }
 
-    // Pantalla provisional de pacientes.
-    return (
-      <TemporaryHomeScreen
-        title="Bienvenido a MontseApp"
-        description="Aquí construiremos la reserva de citas, especialistas y gestión del perfil."
-      />
-    );
+   // Pantalla provisional de pacientes.
+return (
+  <TemporaryHomeScreen
+    title="Bienvenido a MontseApp"
+    description="Aquí construiremos la reserva de citas, especialistas y gestión del perfil."
+    onActivateAdmin={
+      ownerActivated === false
+        ? () => setShowAdminActivation(true)
+        : undefined
+    }
+  />
+);
   };
 
   return (
@@ -300,9 +390,11 @@ export default function App() {
 function TemporaryHomeScreen({
   title,
   description,
+  onActivateAdmin,
 }: {
   title: string;
   description: string;
+  onActivateAdmin?: () => void;
 }) {
   return (
     <SafeAreaView
@@ -357,6 +449,39 @@ function TemporaryHomeScreen({
       >
         Pantalla en desarrollo
       </Text>
+      {onActivateAdmin && (
+  <TouchableOpacity
+    onPress={onActivateAdmin}
+    activeOpacity={0.85}
+    style={{
+      marginTop: 32,
+      backgroundColor: colors.primary,
+      paddingVertical: 16,
+      paddingHorizontal: 24,
+      borderRadius: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+    }}
+  >
+    <Ionicons
+      name="key-outline"
+      size={20}
+      color="#FFFFFF"
+    />
+
+    <Text
+      style={{
+        fontFamily: 'PlusJakartaSans_700Bold',
+        fontSize: 14,
+        color: '#FFFFFF',
+      }}
+    >
+      Activar cuenta administrativa
+    </Text>
+  </TouchableOpacity>
+)}
     </SafeAreaView>
   );
 }

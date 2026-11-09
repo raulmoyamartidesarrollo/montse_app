@@ -185,23 +185,27 @@ const handleContinueWithoutCode = async () => {
         >
           {/* CABECERA */}
 
-          <View style={styles.header}>
-            <Pressable
-              onPress={onBack}
-              style={styles.backButton}
-              accessibilityLabel="Volver"
-            >
-              <Ionicons
-                name="arrow-back"
-                size={24}
-                color={colors.text}
-              />
-            </Pressable>
+         <View style={styles.header}>
+  {onBack && (
+    <Pressable
+      onPress={onBack}
+      style={styles.backButton}
+      accessibilityRole="button"
+      accessibilityLabel="Volver a la pantalla anterior"
+      hitSlop={12}
+    >
+      <Ionicons
+        name="arrow-back"
+        size={24}
+        color={colors.text}
+      />
+    </Pressable>
+  )}
 
-            <Text style={styles.headerTitle}>
-              Activación de cuenta
-            </Text>
-          </View>
+  <Text style={styles.headerTitle}>
+    Activación de cuenta
+  </Text>
+</View>
 
           {/* CONTEXTO */}
 

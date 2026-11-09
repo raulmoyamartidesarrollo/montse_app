@@ -129,8 +129,12 @@ export const ensureUserProfile = onCall(
  * Activa una cuenta administrativa mediante
  * una invitación de un solo uso.
  *
- * El código no caduca y no está vinculado
- * previamente a ningún correo electrónico.
+ * Requiere:
+ * - Usuario autenticado.
+ * - Correo electrónico verificado.
+ * - Coincidencia con el correo de la invitación.
+ * - Código válido y sin utilizar.
+ * - Invitación dentro de su periodo de validez.
  */
 export const activateAccountWithCode = onCall(
   {
@@ -154,6 +158,18 @@ export const activateAccountWithCode = onCall(
         "Debes verificar tu correo electrónico antes de activar la cuenta."
       );
     }
+
+    // Obtener el correo verificado directamente de Firebase Auth.
+    // Nunca confiar en un correo enviado desde la aplicación.
+    const verifiedEmail = userRecord.email?.trim().toLowerCase();
+
+    if (!verifiedEmail) {
+    throw new HttpsError(
+        "failed-precondition",
+        "Tu cuenta debe tener un correo electrónico verificado."
+    );
+    }
+
 
     const rawCode = request.data?.code;
     const normalizedCode =
@@ -184,6 +200,10 @@ export const activateAccountWithCode = onCall(
       ? db.collection("adminInvitations").doc(role)
       : null;
 
+        // Documento principal del centro.
+        const centerRef = db
+        .collection("centers")
+        .doc(CENTER_ID);
     const workerRef = db
       .collection("centers")
       .doc(CENTER_ID)
@@ -262,7 +282,8 @@ export const activateAccountWithCode = onCall(
 
       const userSnapshot =
         await transaction.get(userRef);
-
+        const centerSnapshot =
+            await transaction.get(centerRef);
       const workerSnapshot =
         role === "owner"
           ? await transaction.get(workerRef)
@@ -275,13 +296,16 @@ export const activateAccountWithCode = onCall(
         invitation?.status !== "pending" ||
         invitation?.codeHash !== codeHash ||
         invitation?.role !== role ||
-        invitation?.centerId !== CENTER_ID
-      ) {
+        invitation?.centerId !== CENTER_ID ||
+        invitation?.allowedEmail !== verifiedEmail ||
+        !(invitation?.expiresAt instanceof Timestamp) ||
+        invitation.expiresAt.toMillis() <= Date.now()
+        ) {
         throw activationError(
-          "permission-denied",
-          "El código no es válido o ya ha sido utilizado."
+            "permission-denied",
+            "El código no es válido, no corresponde a tu cuenta o ha caducado."
         );
-      }
+        }
 
       if (!userSnapshot.exists) {
         throw activationError(
@@ -315,20 +339,34 @@ export const activateAccountWithCode = onCall(
       }
 
       if (role === "owner") {
-        if (!workerSnapshot?.exists) {
-          throw activationError(
-            "failed-precondition",
-            "No existe el perfil profesional de Montse."
-          );
-        }
+  if (!centerSnapshot.exists) {
+    throw activationError(
+      "failed-precondition",
+      "El centro no existe."
+    );
+  }
 
-        if (workerSnapshot.data()?.userId) {
-          throw activationError(
-            "failed-precondition",
-            "La propietaria ya tiene una cuenta vinculada."
-          );
-        }
-      }
+  if (centerSnapshot.data()?.ownerActivated === true) {
+    throw activationError(
+      "failed-precondition",
+      "El centro ya tiene una propietaria activada."
+    );
+  }
+
+  if (!workerSnapshot?.exists) {
+    throw activationError(
+      "failed-precondition",
+      "No existe el perfil profesional de Montse."
+    );
+  }
+
+  if (workerSnapshot.data()?.userId) {
+    throw activationError(
+      "failed-precondition",
+      "La propietaria ya tiene una cuenta vinculada."
+    );
+  }
+}
 
       const newRoles =
         role === "owner"
@@ -343,10 +381,18 @@ export const activateAccountWithCode = onCall(
 
       if (role === "owner") {
         transaction.update(workerRef, {
-          userId: uid,
-          updatedAt: FieldValue.serverTimestamp(),
+            userId: uid,
+            updatedAt: FieldValue.serverTimestamp(),
         });
-      }
+
+        // El negocio ya tiene propietaria.
+        transaction.update(centerRef, {
+            ownerActivated: true,
+            ownerUid: uid,
+            ownerActivatedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+        });
+        }
 
       transaction.update(invitationRef, {
         status: "used",
@@ -435,6 +481,59 @@ export const completeActivationOnboarding = onCall(
     return {
       success: true,
       activationOnboardingCompleted: true,
+    };
+  }
+);
+/**
+ * Consulta si el centro ya tiene una propietaria activada.
+ *
+ * No devuelve información personal ni permisos.
+ * Solo informa del estado de activación del negocio.
+ */
+export const getCenterActivationStatus = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const centerSnapshot = await centerRef.get();
+
+    if (!centerSnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "El centro no está configurado."
+      );
+    }
+
+    const centerData = centerSnapshot.data();
+
+    return {
+      ownerActivated:
+        centerData?.ownerActivated === true &&
+        typeof centerData?.ownerUid === "string" &&
+        centerData.ownerUid.length > 0,
     };
   }
 );
