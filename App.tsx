@@ -42,6 +42,7 @@ import type { User } from 'firebase/auth';
 import { colors } from './src/theme/colors';
 import SplashScreen from './src/screen/SplashScreen';
 import ActivationCodeScreen from './src/screen/ActivationCodeScreen';
+import AppNavigator from './src/navigation/AppNavigator';
 import {
   ensureUserProfile,
   getUserProfile,
@@ -357,23 +358,12 @@ useEffect(() => {
       );
     }
 
-    // Pantalla provisional de administración.
-    if (hasAdminAccess(profile.roles)) {
-      return (
-        <TemporaryHomeScreen
-          title="Panel de administración"
-          description="Aquí construiremos la agenda, pacientes, servicios y configuración de la clínica."
-        />
-      );
-    }
-
-   // Pantalla provisional de pacientes.
+    // Navegación principal según los roles del usuario.
 return (
-  <TemporaryHomeScreen
-    title="Bienvenido a MontseApp"
-    description="Aquí construiremos la reserva de citas, especialistas y gestión del perfil."
+  <AppNavigator
+    profile={profile}
     onActivateAdmin={
-      ownerActivated === false
+      ownerActivated === false && !hasAdminAccess(profile.roles)
         ? () => setShowAdminActivation(true)
         : undefined
     }
@@ -387,104 +377,7 @@ return (
     </SafeAreaProvider>
   );
 }
-function TemporaryHomeScreen({
-  title,
-  description,
-  onActivateAdmin,
-}: {
-  title: string;
-  description: string;
-  onActivateAdmin?: () => void;
-}) {
-  return (
-    <SafeAreaView
-      style={{
-        flex: 1,
-        backgroundColor: colors.background,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 30,
-      }}
-    >
-      <StatusBar style="dark" />
 
-      <Ionicons
-        name="heart-circle-outline"
-        size={70}
-        color={colors.primary}
-      />
-
-      <Text
-        style={{
-          fontFamily: 'PlusJakartaSans_700Bold',
-          fontSize: 24,
-          color: colors.text,
-          textAlign: 'center',
-          marginTop: 20,
-        }}
-      >
-        {title}
-      </Text>
-
-      <Text
-        style={{
-          fontFamily: 'PlusJakartaSans_400Regular',
-          fontSize: 14,
-          lineHeight: 23,
-          color: colors.textSecondary,
-          textAlign: 'center',
-          marginTop: 12,
-        }}
-      >
-        {description}
-      </Text>
-
-      <Text
-        style={{
-          fontFamily: 'PlusJakartaSans_500Medium',
-          fontSize: 12,
-          color: colors.textMuted,
-          marginTop: 25,
-        }}
-      >
-        Pantalla en desarrollo
-      </Text>
-      {onActivateAdmin && (
-  <TouchableOpacity
-    onPress={onActivateAdmin}
-    activeOpacity={0.85}
-    style={{
-      marginTop: 32,
-      backgroundColor: colors.primary,
-      paddingVertical: 16,
-      paddingHorizontal: 24,
-      borderRadius: 14,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 10,
-    }}
-  >
-    <Ionicons
-      name="key-outline"
-      size={20}
-      color="#FFFFFF"
-    />
-
-    <Text
-      style={{
-        fontFamily: 'PlusJakartaSans_700Bold',
-        fontSize: 14,
-        color: '#FFFFFF',
-      }}
-    >
-      Activar cuenta administrativa
-    </Text>
-  </TouchableOpacity>
-)}
-    </SafeAreaView>
-  );
-}
 
 function LoginScreen() {
 
