@@ -537,3 +537,124 @@ export const getCenterActivationStatus = onCall(
     };
   }
 );
+/**
+ * Obtiene la configuración del centro.
+ *
+ * Solo pueden acceder usuarios administrativos
+ * vinculados al centro.
+ */
+export const getCenterSettings = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const userSnapshot = await db
+      .collection("users")
+      .doc(uid)
+      .get();
+
+    if (!userSnapshot.exists) {
+      throw new HttpsError(
+        "permission-denied",
+        "No existe el perfil de usuario."
+      );
+    }
+
+    const userData = userSnapshot.data();
+
+    const roles: string[] = Array.isArray(userData?.roles)
+      ? userData.roles
+      : [];
+
+    if (userData?.centerId !== CENTER_ID) {
+      throw new HttpsError(
+        "permission-denied",
+        "No perteneces a este centro."
+      );
+    }
+
+    // Acceso de lectura para la propietaria
+    // y el desarrollador autorizado.
+    if (
+      !roles.includes("owner") &&
+      !roles.includes("developer")
+    ) {
+      throw new HttpsError(
+        "permission-denied",
+        "No tienes permisos para consultar estos datos."
+      );
+    }
+
+    const centerSnapshot = await db
+      .collection("centers")
+      .doc(CENTER_ID)
+      .get();
+
+    if (!centerSnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "El centro no existe."
+      );
+    }
+
+    const center = centerSnapshot.data();
+
+    // Devolver únicamente información de configuración.
+    // No exponer identificadores internos de propiedad.
+    return {
+      name: center?.name ?? "",
+      description: center?.description ?? "",
+
+      address: {
+        street: center?.address?.street ?? "",
+        number: center?.address?.number ?? "",
+        floor: center?.address?.floor ?? "",
+        door: center?.address?.door ?? "",
+        postalCode: center?.address?.postalCode ?? "",
+        city: center?.address?.city ?? "",
+        province: center?.address?.province ?? "",
+        country: center?.address?.country ?? "ES",
+        formattedAddress:
+          center?.address?.formattedAddress ?? "",
+      },
+
+      contact: {
+        phone: center?.contact?.phone ?? "",
+        mobile: center?.contact?.mobile ?? "",
+        whatsapp: center?.contact?.whatsapp ?? "",
+        email: center?.contact?.email ?? "",
+        website: center?.contact?.website ?? "",
+      },
+
+      socialMedia: {
+        instagram: center?.socialMedia?.instagram ?? "",
+        facebook: center?.socialMedia?.facebook ?? "",
+        tiktok: center?.socialMedia?.tiktok ?? "",
+        youtube: center?.socialMedia?.youtube ?? "",
+        linkedin: center?.socialMedia?.linkedin ?? "",
+        x: center?.socialMedia?.x ?? "",
+      },
+
+      timezone: center?.timezone ?? "Europe/Madrid",
+    };
+  }
+);

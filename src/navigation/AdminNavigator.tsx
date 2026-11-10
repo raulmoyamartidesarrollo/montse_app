@@ -13,6 +13,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../theme/colors';
+import AdminHomeScreen from '../screens/admin/AdminHomeScreen';
+import AdminMoreNavigator from './AdminMoreNavigator';
 
 type AdminTabParamList = {
   Inicio: undefined;
@@ -154,10 +156,10 @@ export default function AdminNavigator() {
         },
       })}
     >
-      <Tab.Screen
+     <Tab.Screen
         name="Inicio"
-        component={HomeScreen}
-      />
+        component={AdminHomeScreen}
+        />
 
       <Tab.Screen
         name="Agenda"
@@ -176,7 +178,7 @@ export default function AdminNavigator() {
 
       <Tab.Screen
         name="Mas"
-        component={MoreScreen}
+        component={AdminMoreNavigator}
         options={{
           tabBarLabel: 'Más',
         }}

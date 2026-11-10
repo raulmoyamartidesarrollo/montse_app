@@ -57,6 +57,7 @@ const SPLASH_DURATION = 1500;
 const PROGRESS_INTERVAL = 16;
 
 export default function App() {
+  
   const [fontsLoaded, fontError] = useFonts({
     PlusJakartaSans_400Regular,
     PlusJakartaSans_500Medium,
@@ -243,6 +244,27 @@ useEffect(() => {
     authReady &&
     !profileLoading &&
     minimumTimeElapsed;
+    useEffect(() => {
+  console.log('MONTSEAPP ESTADO:', {
+    resourcesReady,
+    authReady,
+    profileLoading,
+    minimumTimeElapsed,
+    appReady,
+    currentUser: currentUser?.uid ?? null,
+    profileLoaded: !!profile,
+    profileError,
+  });
+}, [
+  resourcesReady,
+  authReady,
+  profileLoading,
+  minimumTimeElapsed,
+  appReady,
+  currentUser?.uid,
+  profile,
+  profileError,
+]);
 
   const splashStatus = !resourcesReady
     ? 'Preparando aplicación...'
@@ -371,11 +393,11 @@ return (
 );
   };
 
-  return (
-    <SafeAreaProvider>
-      {renderScreen()}
-    </SafeAreaProvider>
-  );
+return (
+  <SafeAreaProvider>
+    {renderScreen()}
+  </SafeAreaProvider>
+);
 }
 
 
