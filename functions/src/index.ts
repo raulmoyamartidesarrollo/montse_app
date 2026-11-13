@@ -654,7 +654,395 @@ export const getCenterSettings = onCall(
         x: center?.socialMedia?.x ?? "",
       },
 
-      timezone: center?.timezone ?? "Europe/Madrid",
+            timezone: center?.timezone ?? "Europe/Madrid",
+
+      bookingSettings: {
+        allowClientCancellation:
+          center?.bookingSettings?.allowClientCancellation ?? true,
+
+        allowClientRescheduling:
+          center?.bookingSettings?.allowClientRescheduling ?? true,
+
+        allowRecurringBookings:
+          center?.bookingSettings?.allowRecurringBookings ?? true,
+
+        defaultDurationMinutes:
+          center?.bookingSettings?.defaultDurationMinutes ?? 60,
+
+        recurringIntervalsWeeks:
+          center?.bookingSettings?.recurringIntervalsWeeks ?? [1, 2, 3, 4],
+      },
     };
+  }
+);
+/**
+ * Actualiza una sección de la configuración del centro.
+ *
+ * Permisos:
+ * - developer: lectura y escritura.
+ * - owner: lectura y escritura, con cuenta activada.
+ *
+ * Los permisos se comprueban en Firebase.
+ */
+export const updateCenterSettings = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const section = request.data?.section;
+    const payload = request.data?.data;
+
+    const allowedSections = [
+      "general",
+      "contact",
+      "address",
+      "socialMedia",
+      "advanced",
+    ] as const;
+
+    if (
+      !allowedSections.some((allowed) => allowed === section) ||
+      !payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La configuración enviada no es válida."
+      );
+    }
+
+    const input = payload as Record<string, unknown>;
+
+    // Rechazar propiedades desconocidas.
+    const validateKeys = (allowed: string[]) => {
+      const keys = Object.keys(input);
+
+      if (
+        keys.length === 0 ||
+        keys.some((key) => !allowed.includes(key))
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "La sección contiene campos no permitidos."
+        );
+      }
+    };
+
+    const readString = (key: string, maxLength: number) => {
+      const value = input[key];
+
+      if (typeof value !== "string" || value.length > maxLength) {
+        throw new HttpsError(
+          "invalid-argument",
+          `El campo ${key} no es válido.`
+        );
+      }
+
+      return value.trim();
+    };
+
+    const readBoolean = (key: string) => {
+      if (typeof input[key] !== "boolean") {
+        throw new HttpsError(
+          "invalid-argument",
+          `El campo ${key} debe ser verdadero o falso.`
+        );
+      }
+
+      return input[key] as boolean;
+    };
+
+    let updates: Record<string, unknown> = {};
+
+    switch (section) {
+      case "general": {
+        validateKeys(["name", "description"]);
+
+        const name = readString("name", 120);
+        const description = readString("description", 1000);
+
+        if (!name) {
+          throw new HttpsError(
+            "invalid-argument",
+            "El nombre del centro es obligatorio."
+          );
+        }
+
+        updates = { name, description };
+        break;
+      }
+
+      case "contact": {
+        const keys = [
+          "phone",
+          "mobile",
+          "whatsapp",
+          "email",
+          "website",
+        ];
+
+        validateKeys(keys);
+
+        const values = Object.fromEntries(
+          keys.map((key) => [key, readString(key, 200)])
+        );
+
+        const email = values.email;
+
+        if (
+          email &&
+          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+        ) {
+          throw new HttpsError(
+            "invalid-argument",
+            "El correo electrónico no es válido."
+          );
+        }
+
+        if (values.website) {
+          try {
+            const url = new URL(values.website);
+            if (!["https:", "http:"].includes(url.protocol)) {
+              throw new Error("Protocolo no permitido");
+            }
+          } catch {
+            throw new HttpsError(
+              "invalid-argument",
+              "La dirección web no es válida."
+            );
+          }
+        }
+
+        updates = { contact: values };
+        break;
+      }
+
+      case "address": {
+        const keys = [
+          "street",
+          "number",
+          "floor",
+          "door",
+          "postalCode",
+          "city",
+          "province",
+          "country",
+        ];
+
+        validateKeys(keys);
+
+        const values = Object.fromEntries(
+          keys.map((key) => [key, readString(key, 150)])
+        );
+
+        if (
+          values.country &&
+          !/^[A-Z]{2}$/.test(values.country.toUpperCase())
+        ) {
+          throw new HttpsError(
+            "invalid-argument",
+            "El país debe tener un código ISO de dos letras."
+          );
+        }
+
+        values.country = values.country.toUpperCase();
+
+        values.formattedAddress = [
+          [values.street, values.number].filter(Boolean).join(", "),
+          [
+            values.floor ? `Piso ${values.floor}` : "",
+            values.door ? `Puerta ${values.door}` : "",
+          ].filter(Boolean).join(", "),
+          [values.postalCode, values.city].filter(Boolean).join(" "),
+          values.province,
+          values.country,
+        ]
+          .filter(Boolean)
+          .join(", ");
+
+        updates = { address: values };
+        break;
+      }
+
+      case "socialMedia": {
+        const keys = [
+          "instagram",
+          "facebook",
+          "tiktok",
+          "youtube",
+          "linkedin",
+          "x",
+        ];
+
+        validateKeys(keys);
+
+        const values = Object.fromEntries(
+          keys.map((key) => [key, readString(key, 300)])
+        );
+
+        for (const [key, value] of Object.entries(values)) {
+          if (!value) continue;
+
+          try {
+            const url = new URL(value);
+
+            if (
+              !["https:", "http:"].includes(url.protocol) ||
+              !url.hostname
+            ) {
+              throw new Error("URL no válida");
+            }
+          } catch {
+            throw new HttpsError(
+              "invalid-argument",
+              `El enlace de ${key} no es válido.`
+            );
+          }
+        }
+
+        updates = { socialMedia: values };
+        break;
+      }
+
+      case "advanced": {
+        validateKeys([
+          "timezone",
+          "allowClientCancellation",
+          "allowClientRescheduling",
+          "allowRecurringBookings",
+          "defaultDurationMinutes",
+          "recurringIntervalsWeeks",
+        ]);
+
+        const timezone = readString("timezone", 100);
+
+        if (timezone !== "Europe/Madrid") {
+          throw new HttpsError(
+            "invalid-argument",
+            "La zona horaria no está permitida."
+          );
+        }
+
+        const duration = input.defaultDurationMinutes;
+
+        if (
+          typeof duration !== "number" ||
+          ![30, 45, 60, 90, 120].includes(duration)
+        ) {
+          throw new HttpsError(
+            "invalid-argument",
+            "La duración de las sesiones no es válida."
+          );
+        }
+
+        const intervals = input.recurringIntervalsWeeks;
+
+        if (
+          !Array.isArray(intervals) ||
+          intervals.some(
+            (value) =>
+              typeof value !== "number" ||
+              ![1, 2, 3, 4].includes(value)
+          ) ||
+          new Set(intervals).size !== intervals.length
+        ) {
+          throw new HttpsError(
+            "invalid-argument",
+            "Los intervalos de recurrencia no son válidos."
+          );
+        }
+
+        const allowRecurringBookings =
+          readBoolean("allowRecurringBookings");
+
+        if (allowRecurringBookings && intervals.length === 0) {
+          throw new HttpsError(
+            "invalid-argument",
+            "Selecciona al menos un intervalo de recurrencia."
+          );
+        }
+
+        updates = {
+          timezone,
+          bookingSettings: {
+            allowClientCancellation:
+              readBoolean("allowClientCancellation"),
+            allowClientRescheduling:
+              readBoolean("allowClientRescheduling"),
+            allowRecurringBookings,
+            defaultDurationMinutes: duration,
+            recurringIntervalsWeeks: [...intervals].sort(
+              (a, b) => a - b
+            ),
+          },
+        };
+        break;
+      }
+    }
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+      const centerSnapshot = await transaction.get(centerRef);
+
+      if (!userSnapshot.exists || !centerSnapshot.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se ha encontrado el usuario o el centro."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+  roles.includes("owner") &&
+  centerData?.ownerActivated === true &&
+  centerData?.ownerUid === uid;
+
+const isDeveloper = roles.includes("developer");
+
+if (
+  userData?.centerId !== CENTER_ID ||
+  (!isOwner && !isDeveloper)
+) {
+  throw new HttpsError(
+    "permission-denied",
+    "No tienes permisos para modificar la configuración del centro."
+  );
+}
+
+      transaction.update(centerRef, {
+        ...updates,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return { success: true };
   }
 );

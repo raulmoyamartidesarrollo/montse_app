@@ -1,17 +1,20 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import {
+  useFocusEffect,
+  useNavigation,
+} from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { AdminMoreStackParamList } from '../../navigation/AdminMoreNavigator';
 
 import { colors } from '../../theme/colors';
 import {
@@ -19,47 +22,53 @@ import {
   getCenterSettings,
 } from '../../services/centers';
 
-type FieldProps = {
-  label: string;
-  value: string;
-  onChangeText: (value: string) => void;
-  multiline?: boolean;
-  keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'url';
+type IconName = React.ComponentProps<typeof Ionicons>['name'];
+
+type SettingsCardProps = {
+  title: string;
+  description: string;
+  icon: IconName;
+  onPress: () => void;
 };
 
-function FormField({
-  label,
-  value,
-  onChangeText,
-  multiline = false,
-  keyboardType = 'default',
-}: FieldProps) {
+function SettingsCard({
+  title,
+  description,
+  icon,
+  onPress,
+}: SettingsCardProps) {
   return (
-    <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
+    <Pressable
+      style={styles.settingsCard}
+      onPress={onPress}
+    >
+      <View style={styles.cardIcon}>
+        <Ionicons
+          name={icon}
+          size={23}
+          color={colors.primary}
+        />
+      </View>
 
-      <TextInput
-        style={[
-          styles.input,
-          multiline && styles.multilineInput,
-        ]}
-        value={value}
-        onChangeText={onChangeText}
-        multiline={multiline}
-        keyboardType={keyboardType}
-        autoCapitalize={
-          keyboardType === 'email-address' || keyboardType === 'url'
-            ? 'none'
-            : 'sentences'
-        }
-        placeholderTextColor={colors.textMuted}
+      <View style={styles.cardContent}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.cardDescription}>
+          {description}
+        </Text>
+      </View>
+
+      <Ionicons
+        name="chevron-forward"
+        size={20}
+        color={colors.textMuted}
       />
-    </View>
+    </Pressable>
   );
 }
 
 export default function CenterSettingsScreen() {
-  const navigation = useNavigation();
+  const navigation =
+  useNavigation<NativeStackNavigationProp<AdminMoreStackParamList>>();
   const insets = useSafeAreaInsets();
 
   const [center, setCenter] = useState<CenterSettings | null>(null);
@@ -72,69 +81,20 @@ export default function CenterSettingsScreen() {
       setError(null);
 
       const data = await getCenterSettings();
-
       setCenter(data);
     } catch (err) {
       console.error('Error al cargar el centro:', err);
-
-      setError(
-        'No se ha podido recuperar la información del centro.'
-      );
+      setError('No se ha podido cargar la información del centro.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
+ useFocusEffect(
+  useCallback(() => {
     void loadCenter();
-  }, [loadCenter]);
-
-  const updateField = (
-    section: 'address' | 'contact' | 'socialMedia',
-    field: string,
-    value: string
-  ) => {
-    setCenter((previous) => {
-      if (!previous) return previous;
-
-      return {
-        ...previous,
-        [section]: {
-          ...previous[section],
-          [field]: value,
-        },
-      };
-    });
-  };
-
-  const updateMainField = (
-    field: 'name' | 'description',
-    value: string
-  ) => {
-    setCenter((previous) =>
-      previous
-        ? {
-            ...previous,
-            [field]: value,
-          }
-        : previous
-    );
-  };
-
-  const renderField = (
-    label: string,
-    section: 'address' | 'contact' | 'socialMedia',
-    field: string,
-    value: string,
-    keyboardType: FieldProps['keyboardType'] = 'default'
-  ) => (
-    <FormField
-      label={label}
-      value={value}
-      keyboardType={keyboardType}
-      onChangeText={(text) => updateField(section, field, text)}
-    />
-  );
+  }, [loadCenter])
+);
 
   return (
     <View style={styles.container}>
@@ -160,17 +120,17 @@ export default function CenterSettingsScreen() {
         </Text>
       </View>
 
-      {loading ? (
+      {loading && !center ? (
         <View style={styles.centered}>
           <ActivityIndicator
             size="large"
             color={colors.primary}
           />
-          <Text style={styles.loadingText}>
-            Cargando información del centro...
+          <Text style={styles.message}>
+            Cargando información...
           </Text>
         </View>
-      ) : error ? (
+      ) : error && !center ? (
         <View style={styles.centered}>
           <Ionicons
             name="alert-circle-outline"
@@ -178,7 +138,7 @@ export default function CenterSettingsScreen() {
             color={colors.primary}
           />
 
-          <Text style={styles.errorText}>{error}</Text>
+          <Text style={styles.message}>{error}</Text>
 
           <Pressable
             style={styles.retryButton}
@@ -192,196 +152,71 @@ export default function CenterSettingsScreen() {
       ) : center ? (
         <ScrollView
           style={styles.scroll}
-          keyboardShouldPersistTaps="handled"
           contentContainerStyle={{
             paddingHorizontal: 20,
             paddingTop: 24,
-            paddingBottom: insets.bottom + 120,
+            paddingBottom: insets.bottom + 110,
           }}
         >
-          <Text style={styles.sectionTitle}>
-            INFORMACIÓN GENERAL
-          </Text>
+          <View style={styles.centerCard}>
+            <View style={styles.logo}>
+              <Text style={styles.logoText}>MA</Text>
+            </View>
 
-          <FormField
-            label="Nombre del centro"
-            value={center.name}
-            onChangeText={(text) =>
-              updateMainField('name', text)
-            }
-          />
-
-          <FormField
-            label="Descripción"
-            value={center.description}
-            multiline
-            onChangeText={(text) =>
-              updateMainField('description', text)
-            }
-          />
-
-          <Text style={styles.sectionTitle}>
-            CONTACTO
-          </Text>
-
-          {renderField(
-            'Teléfono',
-            'contact',
-            'phone',
-            center.contact.phone,
-            'phone-pad'
-          )}
-
-          {renderField(
-            'Móvil',
-            'contact',
-            'mobile',
-            center.contact.mobile,
-            'phone-pad'
-          )}
-
-          {renderField(
-            'WhatsApp',
-            'contact',
-            'whatsapp',
-            center.contact.whatsapp,
-            'phone-pad'
-          )}
-
-          {renderField(
-            'Correo electrónico',
-            'contact',
-            'email',
-            center.contact.email,
-            'email-address'
-          )}
-
-          {renderField(
-            'Página web',
-            'contact',
-            'website',
-            center.contact.website,
-            'url'
-          )}
-
-          <Text style={styles.sectionTitle}>
-            DIRECCIÓN
-          </Text>
-
-          {renderField(
-            'Calle',
-            'address',
-            'street',
-            center.address.street
-          )}
-
-          {renderField(
-            'Número',
-            'address',
-            'number',
-            center.address.number
-          )}
-
-          {renderField(
-            'Piso',
-            'address',
-            'floor',
-            center.address.floor
-          )}
-
-          {renderField(
-            'Puerta',
-            'address',
-            'door',
-            center.address.door
-          )}
-
-          {renderField(
-            'Código postal',
-            'address',
-            'postalCode',
-            center.address.postalCode
-          )}
-
-          {renderField(
-            'Localidad',
-            'address',
-            'city',
-            center.address.city
-          )}
-
-          {renderField(
-            'Provincia',
-            'address',
-            'province',
-            center.address.province
-          )}
-
-          <Text style={styles.sectionTitle}>
-            REDES SOCIALES
-          </Text>
-
-          {renderField(
-            'Instagram',
-            'socialMedia',
-            'instagram',
-            center.socialMedia.instagram
-          )}
-
-          {renderField(
-            'Facebook',
-            'socialMedia',
-            'facebook',
-            center.socialMedia.facebook
-          )}
-
-          {renderField(
-            'TikTok',
-            'socialMedia',
-            'tiktok',
-            center.socialMedia.tiktok
-          )}
-
-          {renderField(
-            'YouTube',
-            'socialMedia',
-            'youtube',
-            center.socialMedia.youtube
-          )}
-
-          {renderField(
-            'LinkedIn',
-            'socialMedia',
-            'linkedin',
-            center.socialMedia.linkedin
-          )}
-
-          {renderField(
-            'X / Twitter',
-            'socialMedia',
-            'x',
-            center.socialMedia.x
-          )}
-
-          <Pressable
-            style={styles.saveButton}
-            onPress={() =>
-              Alert.alert(
-                'Próximamente',
-                'En el siguiente paso activaremos el guardado seguro en Firebase.'
-              )
-            }
-          >
-            <Ionicons
-              name="save-outline"
-              size={20}
-              color="#FFFFFF"
-            />
-
-            <Text style={styles.saveButtonText}>
-              Guardar cambios
+            <Text style={styles.centerName}>
+              {center.name}
             </Text>
-          </Pressable>
+
+            <Text style={styles.centerSubtitle}>
+              Configuración del centro
+            </Text>
+          </View>
+
+          <Text style={styles.sectionTitle}>
+            INFORMACIÓN DEL CENTRO
+          </Text>
+
+          <SettingsCard
+            title="Información general"
+            description="Nombre, descripción y logotipo"
+            icon="business-outline"
+            onPress={() => navigation.navigate('CenterGeneral', { center })}
+          />
+
+          <SettingsCard
+            title="Contacto"
+            description={
+              center.contact.phone ||
+              center.contact.mobile ||
+              'Teléfono, WhatsApp y correo'
+            }
+            icon="call-outline"
+            onPress={() => navigation.navigate('CenterContact', { center })}
+          />
+
+          <SettingsCard
+            title="Ubicación"
+            description={
+              center.address.city ||
+              'Dirección y localidad'
+            }
+            icon="location-outline"
+            onPress={() => navigation.navigate('CenterAddress', { center })}
+          />
+
+          <SettingsCard
+            title="Redes sociales"
+            description="Instagram, Facebook y otras redes"
+            icon="globe-outline"
+            onPress={() => navigation.navigate('CenterSocial', { center })}
+          />
+
+          <SettingsCard
+            title="Configuración avanzada"
+            description="Zona horaria y preferencias"
+            icon="settings-outline"
+            onPress={() => navigation.navigate('CenterAdvanced', { center })}
+          />
         </ScrollView>
       ) : null}
     </View>
@@ -421,91 +256,118 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  sectionTitle: {
-    fontFamily: 'PlusJakartaSans_700Bold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: colors.primary,
-    marginTop: 26,
-    marginBottom: 18,
-  },
-
-  field: {
-    marginBottom: 18,
-  },
-
-  label: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 13,
-    color: colors.text,
-    marginBottom: 8,
-  },
-
-  input: {
+  centerCard: {
+    alignItems: 'center',
     backgroundColor: colors.surface,
+    borderRadius: 22,
+    paddingVertical: 28,
+    paddingHorizontal: 20,
     borderWidth: 1,
     borderColor: colors.surfaceBorder,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
+  },
+
+  logo: {
+    width: 76,
+    height: 76,
+    borderRadius: 22,
+    backgroundColor: colors.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+
+  logoText: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 27,
+    color: colors.primary,
+  },
+
+  centerName: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 19,
+    color: colors.text,
+    textAlign: 'center',
+  },
+
+  centerSubtitle: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 6,
+  },
+
+  sectionTitle: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 11,
+    letterSpacing: 1,
+    color: colors.textMuted,
+    marginTop: 28,
+    marginBottom: 14,
+  },
+
+  settingsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: 17,
+    padding: 17,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+  },
+
+  cardIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: colors.surfaceMuted,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+
+  cardContent: {
+    flex: 1,
+  },
+
+  cardTitle: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 15,
     color: colors.text,
   },
 
-  multilineInput: {
-    minHeight: 100,
-    textAlignVertical: 'top',
+  cardDescription: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 5,
   },
 
   centered: {
     flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 30,
   },
 
-  loadingText: {
-    marginTop: 16,
+  message: {
     fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
     color: colors.textSecondary,
-  },
-
-  errorText: {
-    marginTop: 16,
     textAlign: 'center',
-    fontFamily: 'PlusJakartaSans_400Regular',
-    color: colors.textSecondary,
-    lineHeight: 22,
+    marginTop: 16,
   },
 
   retryButton: {
-    marginTop: 20,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
     backgroundColor: colors.primary,
     borderRadius: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    marginTop: 20,
   },
 
   retryText: {
-    color: '#FFFFFF',
     fontFamily: 'PlusJakartaSans_600SemiBold',
-  },
-
-  saveButton: {
-    marginTop: 24,
-    backgroundColor: colors.primary,
-    paddingVertical: 17,
-    borderRadius: 14,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-  },
-
-  saveButtonText: {
     color: '#FFFFFF',
-    fontFamily: 'PlusJakartaSans_700Bold',
-    fontSize: 15,
   },
 });
