@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
+
 import {
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -9,12 +12,29 @@ import {
   TextInput,
   View,
 } from 'react-native';
+
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+
+import {
+  useFocusEffect,
+  useNavigation,
+  useRoute,
+} from '@react-navigation/native';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../../theme/colors';
-import type { CenterSettings } from '../../services/centers';
+
+import {
+  getCenterSettings,
+  updateCenterSettings,
+  type CenterSettings,
+  type CenterSocialMedia,
+} from '../../services/centers';
+
+// --------------------------------------------------
+// TIPOS
+// --------------------------------------------------
 
 type SocialRouteParams = {
   center: CenterSettings;
@@ -28,7 +48,12 @@ type SocialFieldProps = {
   onChangeText: (value: string) => void;
   placeholder: string;
   icon: IconName;
+  editable?: boolean;
 };
+
+// --------------------------------------------------
+// COMPONENTE CAMPO
+// --------------------------------------------------
 
 function SocialField({
   label,
@@ -36,6 +61,7 @@ function SocialField({
   onChangeText,
   placeholder,
   icon,
+  editable = true,
 }: SocialFieldProps) {
   return (
     <View style={styles.fieldContainer}>
@@ -60,11 +86,83 @@ function SocialField({
           autoCapitalize="none"
           autoCorrect={false}
           maxLength={300}
+          editable={editable}
         />
       </View>
     </View>
   );
 }
+
+// --------------------------------------------------
+// VALIDACIÓN DE URL
+// --------------------------------------------------
+
+const SOCIAL_DOMAINS: Record<
+  keyof CenterSocialMedia,
+  string[]
+> = {
+  instagram: ['instagram.com'],
+  facebook: ['facebook.com', 'fb.com'],
+  tiktok: ['tiktok.com'],
+  youtube: ['youtube.com', 'youtu.be'],
+  linkedin: ['linkedin.com'],
+  x: ['x.com', 'twitter.com'],
+};
+
+const SOCIAL_LABELS: Record<
+  keyof CenterSocialMedia,
+  string
+> = {
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  tiktok: 'TikTok',
+  youtube: 'YouTube',
+  linkedin: 'LinkedIn',
+  x: 'X (Twitter)',
+};
+
+/**
+ * Valida que la URL:
+ *
+ * - Sea una URL HTTP/HTTPS.
+ * - Tenga un dominio válido.
+ * - Pertenezca a la red social correspondiente.
+ *
+ * Los campos vacíos son válidos.
+ */
+function isValidSocialUrl(
+  value: string,
+  social: keyof CenterSocialMedia
+): boolean {
+  if (!value.trim()) {
+    return true;
+  }
+
+  try {
+    const url = new URL(value.trim());
+
+    if (
+      url.protocol !== 'https:' &&
+      url.protocol !== 'http:'
+    ) {
+      return false;
+    }
+
+    const hostname = url.hostname.toLowerCase();
+
+    return SOCIAL_DOMAINS[social].some(
+      domain =>
+        hostname === domain ||
+        hostname.endsWith(`.${domain}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+// --------------------------------------------------
+// PANTALLA PRINCIPAL
+// --------------------------------------------------
 
 export default function CenterSocialScreen() {
   const navigation = useNavigation();
@@ -75,35 +173,231 @@ export default function CenterSocialScreen() {
 
   const social = center.socialMedia;
 
-  const [instagram, setInstagram] = useState(social.instagram ?? '');
-  const [facebook, setFacebook] = useState(social.facebook ?? '');
-  const [tiktok, setTiktok] = useState(social.tiktok ?? '');
-  const [youtube, setYoutube] = useState(social.youtube ?? '');
-  const [linkedin, setLinkedin] = useState(social.linkedin ?? '');
-  const [x, setX] = useState(social.x ?? '');
+  // --------------------------------------------------
+  // ESTADOS
+  // --------------------------------------------------
+
+  const [instagram, setInstagram] = useState(
+    social.instagram ?? ''
+  );
+
+  const [facebook, setFacebook] = useState(
+    social.facebook ?? ''
+  );
+
+  const [tiktok, setTiktok] = useState(
+    social.tiktok ?? ''
+  );
+
+  const [youtube, setYoutube] = useState(
+    social.youtube ?? ''
+  );
+
+  const [linkedin, setLinkedin] = useState(
+    social.linkedin ?? ''
+  );
+
+  const [x, setX] = useState(
+    social.x ?? ''
+  );
+
+  const [savedSocial, setSavedSocial] =
+    useState<CenterSocialMedia>({
+      ...social,
+    });
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // --------------------------------------------------
+  // APLICAR DATOS RECUPERADOS
+  // --------------------------------------------------
+
+  const applySocial = useCallback(
+    (data: CenterSocialMedia) => {
+      setInstagram(data.instagram ?? '');
+      setFacebook(data.facebook ?? '');
+      setTiktok(data.tiktok ?? '');
+      setYoutube(data.youtube ?? '');
+      setLinkedin(data.linkedin ?? '');
+      setX(data.x ?? '');
+
+      setSavedSocial({
+        instagram: data.instagram ?? '',
+        facebook: data.facebook ?? '',
+        tiktok: data.tiktok ?? '',
+        youtube: data.youtube ?? '',
+        linkedin: data.linkedin ?? '',
+        x: data.x ?? '',
+      });
+    },
+    []
+  );
+
+  // --------------------------------------------------
+  // RECARGAR AL ENTRAR EN LA PANTALLA
+  // --------------------------------------------------
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      const loadSocial = async () => {
+        try {
+          setLoading(true);
+
+          const updatedCenter =
+            await getCenterSettings();
+
+          if (!active) {
+            return;
+          }
+
+          applySocial(updatedCenter.socialMedia);
+        } catch (error) {
+          console.error(
+            '[CenterSocialScreen] Error cargando redes sociales:',
+            error
+          );
+
+          if (active) {
+            Alert.alert(
+              'Error de conexión',
+              'No se han podido cargar las redes sociales del centro.'
+            );
+          }
+        } finally {
+          if (active) {
+            setLoading(false);
+          }
+        }
+      };
+
+      void loadSocial();
+
+      return () => {
+        active = false;
+      };
+    }, [applySocial])
+  );
+
+  // --------------------------------------------------
+  // DETECTAR CAMBIOS
+  // --------------------------------------------------
 
   const hasChanges =
-    instagram !== (social.instagram ?? '') ||
-    facebook !== (social.facebook ?? '') ||
-    tiktok !== (social.tiktok ?? '') ||
-    youtube !== (social.youtube ?? '') ||
-    linkedin !== (social.linkedin ?? '') ||
-    x !== (social.x ?? '');
+    instagram !== savedSocial.instagram ||
+    facebook !== savedSocial.facebook ||
+    tiktok !== savedSocial.tiktok ||
+    youtube !== savedSocial.youtube ||
+    linkedin !== savedSocial.linkedin ||
+    x !== savedSocial.x;
+
+  const canSave =
+    hasChanges &&
+    !loading &&
+    !saving;
+
+  // --------------------------------------------------
+  // GUARDAR EN FIREBASE
+  // --------------------------------------------------
+
+  const handleSave = async () => {
+    if (!canSave) {
+      return;
+    }
+
+    const data: CenterSocialMedia = {
+      instagram: instagram.trim(),
+      facebook: facebook.trim(),
+      tiktok: tiktok.trim(),
+      youtube: youtube.trim(),
+      linkedin: linkedin.trim(),
+      x: x.trim(),
+    };
+
+    // Validar todas las redes sociales.
+    const socialKeys = Object.keys(
+      data
+    ) as Array<keyof CenterSocialMedia>;
+
+    for (const socialKey of socialKeys) {
+      if (
+        !isValidSocialUrl(
+          data[socialKey],
+          socialKey
+        )
+      ) {
+        Alert.alert(
+          'Enlace incorrecto',
+          `Introduce una URL válida de ${SOCIAL_LABELS[socialKey]} que comience por https://.`
+        );
+
+        return;
+      }
+    }
+
+    try {
+      setSaving(true);
+
+      // Guardar mediante Cloud Function.
+      await updateCenterSettings({
+        section: 'socialMedia',
+        data,
+      });
+
+      // Confirmar los valores almacenados.
+      const updatedCenter =
+        await getCenterSettings();
+
+      applySocial(updatedCenter.socialMedia);
+
+      Alert.alert(
+        'Cambios guardados',
+        'Las redes sociales del centro se han actualizado correctamente.'
+      );
+    } catch (error) {
+      console.error(
+        '[CenterSocialScreen] Error guardando redes sociales:',
+        error
+      );
+
+      Alert.alert(
+        'Error al guardar',
+        'No se han podido guardar las redes sociales. Comprueba tu conexión e inténtalo de nuevo.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // --------------------------------------------------
+  // INTERFAZ
+  // --------------------------------------------------
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={
+        Platform.OS === 'ios'
+          ? 'padding'
+          : undefined
+      }
     >
+      {/* CABECERA */}
+
       <View
         style={[
           styles.header,
-          { paddingTop: insets.top + 12 },
+          {
+            paddingTop: insets.top + 12,
+          },
         ]}
       >
         <Pressable
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          disabled={saving}
         >
           <Ionicons
             name="arrow-back"
@@ -117,6 +411,8 @@ export default function CenterSocialScreen() {
         </Text>
       </View>
 
+      {/* FORMULARIO */}
+
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={{
@@ -126,6 +422,8 @@ export default function CenterSocialScreen() {
         }}
         keyboardShouldPersistTaps="handled"
       >
+        {/* INFORMACIÓN */}
+
         <View style={styles.infoCard}>
           <View style={styles.infoIcon}>
             <Ionicons
@@ -152,13 +450,18 @@ export default function CenterSocialScreen() {
           REDES SOCIALES
         </Text>
 
+        {/* INSTAGRAM */}
+
         <SocialField
           label="Instagram"
           value={instagram}
           onChangeText={setInstagram}
           placeholder="https://instagram.com/tuclinica"
           icon="logo-instagram"
+          editable={!loading && !saving}
         />
+
+        {/* FACEBOOK */}
 
         <SocialField
           label="Facebook"
@@ -166,7 +469,10 @@ export default function CenterSocialScreen() {
           onChangeText={setFacebook}
           placeholder="https://facebook.com/tuclinica"
           icon="logo-facebook"
+          editable={!loading && !saving}
         />
+
+        {/* TIKTOK */}
 
         <SocialField
           label="TikTok"
@@ -174,7 +480,10 @@ export default function CenterSocialScreen() {
           onChangeText={setTiktok}
           placeholder="https://tiktok.com/@tuclinica"
           icon="logo-tiktok"
+          editable={!loading && !saving}
         />
+
+        {/* YOUTUBE */}
 
         <SocialField
           label="YouTube"
@@ -182,7 +491,10 @@ export default function CenterSocialScreen() {
           onChangeText={setYoutube}
           placeholder="https://youtube.com/@tuclinica"
           icon="logo-youtube"
+          editable={!loading && !saving}
         />
+
+        {/* LINKEDIN */}
 
         <SocialField
           label="LinkedIn"
@@ -190,7 +502,10 @@ export default function CenterSocialScreen() {
           onChangeText={setLinkedin}
           placeholder="https://linkedin.com/company/tuclinica"
           icon="logo-linkedin"
+          editable={!loading && !saving}
         />
+
+        {/* X / TWITTER */}
 
         <SocialField
           label="X (Twitter)"
@@ -198,7 +513,10 @@ export default function CenterSocialScreen() {
           onChangeText={setX}
           placeholder="https://x.com/tuclinica"
           icon="logo-twitter"
+          editable={!loading && !saving}
         />
+
+        {/* AYUDA */}
 
         <View style={styles.helpCard}>
           <Ionicons
@@ -215,39 +533,68 @@ export default function CenterSocialScreen() {
         </View>
       </ScrollView>
 
+      {/* GUARDAR */}
+
       <View
         style={[
           styles.footer,
           {
-            paddingBottom: Math.max(insets.bottom, 16) + 70,
+            paddingBottom:
+              Math.max(insets.bottom, 16) + 70,
           },
         ]}
       >
         <Pressable
           style={[
             styles.saveButton,
-            !hasChanges && styles.saveButtonDisabled,
+            !canSave && styles.saveButtonDisabled,
           ]}
-          disabled
+          onPress={() => void handleSave()}
+          disabled={!canSave}
         >
-          <Ionicons
-            name="save-outline"
-            size={19}
-            color="#FFFFFF"
-          />
+          {saving ? (
+            <>
+              <ActivityIndicator
+                size="small"
+                color="#FFFFFF"
+              />
 
-          <Text style={styles.saveButtonText}>
-            Guardar cambios
-          </Text>
+              <Text style={styles.saveButtonText}>
+                Guardando cambios...
+              </Text>
+            </>
+          ) : (
+            <>
+              <Ionicons
+                name="save-outline"
+                size={19}
+                color="#FFFFFF"
+              />
+
+              <Text style={styles.saveButtonText}>
+                Guardar cambios
+              </Text>
+            </>
+          )}
         </Pressable>
 
         <Text style={styles.footerHint}>
-          Activaremos el guardado seguro próximamente.
+          {loading
+            ? 'Cargando redes sociales...'
+            : saving
+              ? 'Actualizando las redes sociales...'
+              : hasChanges
+                ? 'Tienes cambios pendientes de guardar.'
+                : 'Todos los cambios están guardados.'}
         </Text>
       </View>
     </KeyboardAvoidingView>
   );
 }
+
+// --------------------------------------------------
+// ESTILOS ORIGINALES
+// --------------------------------------------------
 
 const styles = StyleSheet.create({
   container: {

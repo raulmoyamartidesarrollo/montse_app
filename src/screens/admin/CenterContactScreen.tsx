@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -9,12 +11,25 @@ import {
   TextInput,
   View,
 } from 'react-native';
+
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+
+import {
+  useFocusEffect,
+  useNavigation,
+  useRoute,
+} from '@react-navigation/native';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../../theme/colors';
-import type { CenterSettings } from '../../services/centers';
+
+import {
+  getCenterSettings,
+  updateCenterSettings,
+  type CenterContact,
+  type CenterSettings,
+} from '../../services/centers';
 
 type ContactRouteParams = {
   center: CenterSettings;
@@ -28,6 +43,7 @@ type ContactFieldProps = {
   icon: React.ComponentProps<typeof Ionicons>['name'];
   keyboardType?: React.ComponentProps<typeof TextInput>['keyboardType'];
   autoCapitalize?: React.ComponentProps<typeof TextInput>['autoCapitalize'];
+  editable?: boolean;
 };
 
 function ContactField({
@@ -38,6 +54,7 @@ function ContactField({
   icon,
   keyboardType = 'default',
   autoCapitalize = 'none',
+  editable = true,
 }: ContactFieldProps) {
   return (
     <View style={styles.fieldContainer}>
@@ -61,6 +78,7 @@ function ContactField({
           autoCapitalize={autoCapitalize}
           autoCorrect={false}
           maxLength={200}
+          editable={editable}
         />
       </View>
     </View>
@@ -76,16 +94,220 @@ export default function CenterContactScreen() {
 
   const [phone, setPhone] = useState(center.contact.phone ?? '');
   const [mobile, setMobile] = useState(center.contact.mobile ?? '');
-  const [whatsapp, setWhatsapp] = useState(center.contact.whatsapp ?? '');
+  const [whatsapp, setWhatsapp] = useState(
+    center.contact.whatsapp ?? ''
+  );
   const [email, setEmail] = useState(center.contact.email ?? '');
-  const [website, setWebsite] = useState(center.contact.website ?? '');
+  const [website, setWebsite] = useState(
+    center.contact.website ?? ''
+  );
+
+  const [savedContact, setSavedContact] = useState<CenterContact>({
+    ...center.contact,
+  });
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  /**
+   * Actualiza los campos del formulario y la referencia
+   * de los últimos valores confirmados por Firebase.
+   */
+  const applyContact = useCallback((contact: CenterContact) => {
+    setPhone(contact.phone ?? '');
+    setMobile(contact.mobile ?? '');
+    setWhatsapp(contact.whatsapp ?? '');
+    setEmail(contact.email ?? '');
+    setWebsite(contact.website ?? '');
+
+    setSavedContact({ ...contact });
+  }, []);
+
+  /**
+   * Recupera la información actualizada cada vez
+   * que la pantalla recibe el foco.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      const loadContact = async () => {
+        try {
+          setLoading(true);
+
+          const updatedCenter = await getCenterSettings();
+
+          if (!active) return;
+
+          applyContact(updatedCenter.contact);
+        } catch (error) {
+          console.error(
+            '[CenterContactScreen] Error cargando contacto:',
+            error
+          );
+
+          if (active) {
+            Alert.alert(
+              'Error de conexión',
+              'No se ha podido actualizar la información de contacto.'
+            );
+          }
+        } finally {
+          if (active) {
+            setLoading(false);
+          }
+        }
+      };
+
+      void loadContact();
+
+      return () => {
+        active = false;
+      };
+    }, [applyContact])
+  );
 
   const hasChanges =
-    phone !== (center.contact.phone ?? '') ||
-    mobile !== (center.contact.mobile ?? '') ||
-    whatsapp !== (center.contact.whatsapp ?? '') ||
-    email !== (center.contact.email ?? '') ||
-    website !== (center.contact.website ?? '');
+    phone !== savedContact.phone ||
+    mobile !== savedContact.mobile ||
+    whatsapp !== savedContact.whatsapp ||
+    email !== savedContact.email ||
+    website !== savedContact.website;
+
+  const canSave = hasChanges && !loading && !saving;
+
+  /**
+   * Comprueba los números de teléfono.
+   * Permite espacios, prefijo internacional,
+   * paréntesis y guiones.
+   */
+  const isValidPhone = (value: string): boolean => {
+    if (!value.trim()) return true;
+
+    const normalized = value.trim();
+
+    if (!/^\+?[0-9\s()-]+$/.test(normalized)) {
+      return false;
+    }
+
+    const digits = normalized.replace(/\D/g, '');
+
+    return digits.length >= 9 && digits.length <= 15;
+  };
+
+  /**
+   * Comprueba el formato básico del correo electrónico.
+   */
+  const isValidEmail = (value: string): boolean => {
+    if (!value.trim()) return true;
+
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+  };
+
+  /**
+   * Comprueba que la URL utiliza HTTP o HTTPS.
+   */
+  const isValidWebsite = (value: string): boolean => {
+    if (!value.trim()) return true;
+
+    try {
+      const url = new URL(value.trim());
+
+      return (
+        ['https:', 'http:'].includes(url.protocol) &&
+        Boolean(url.hostname)
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * Guarda la información de contacto mediante
+   * la Cloud Function updateCenterSettings.
+   */
+  const handleSave = async () => {
+    if (!canSave) return;
+
+    const data: CenterContact = {
+      phone: phone.trim(),
+      mobile: mobile.trim(),
+      whatsapp: whatsapp.trim(),
+      email: email.trim(),
+      website: website.trim(),
+    };
+
+    if (!isValidPhone(data.phone)) {
+      Alert.alert(
+        'Teléfono incorrecto',
+        'Introduce un número de teléfono fijo válido.'
+      );
+      return;
+    }
+
+    if (!isValidPhone(data.mobile)) {
+      Alert.alert(
+        'Móvil incorrecto',
+        'Introduce un número de teléfono móvil válido.'
+      );
+      return;
+    }
+
+    if (!isValidPhone(data.whatsapp)) {
+      Alert.alert(
+        'WhatsApp incorrecto',
+        'Introduce un número de WhatsApp válido.'
+      );
+      return;
+    }
+
+    if (!isValidEmail(data.email)) {
+      Alert.alert(
+        'Correo incorrecto',
+        'Introduce una dirección de correo electrónico válida.'
+      );
+      return;
+    }
+
+    if (!isValidWebsite(data.website)) {
+      Alert.alert(
+        'Página web incorrecta',
+        'Introduce una dirección válida que comience por https:// o http://.'
+      );
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      await updateCenterSettings({
+        section: 'contact',
+        data,
+      });
+
+      // Confirmamos los valores almacenados en Firebase.
+      const updatedCenter = await getCenterSettings();
+
+      applyContact(updatedCenter.contact);
+
+      Alert.alert(
+        'Cambios guardados',
+        'La información de contacto se ha actualizado correctamente.'
+      );
+    } catch (error) {
+      console.error(
+        '[CenterContactScreen] Error guardando contacto:',
+        error
+      );
+
+      Alert.alert(
+        'Error al guardar',
+        'No se han podido guardar los cambios. Inténtalo de nuevo.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <KeyboardAvoidingView
@@ -101,6 +323,7 @@ export default function CenterContactScreen() {
         <Pressable
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          disabled={saving}
         >
           <Ionicons
             name="arrow-back"
@@ -155,6 +378,7 @@ export default function CenterContactScreen() {
           placeholder="Ej. 964 123 456"
           icon="call-outline"
           keyboardType="phone-pad"
+          editable={!loading && !saving}
         />
 
         <ContactField
@@ -164,6 +388,7 @@ export default function CenterContactScreen() {
           placeholder="Ej. 600 123 456"
           icon="phone-portrait-outline"
           keyboardType="phone-pad"
+          editable={!loading && !saving}
         />
 
         <ContactField
@@ -173,6 +398,7 @@ export default function CenterContactScreen() {
           placeholder="Ej. +34 600 123 456"
           icon="logo-whatsapp"
           keyboardType="phone-pad"
+          editable={!loading && !saving}
         />
 
         <Text style={styles.sectionTitle}>
@@ -186,6 +412,7 @@ export default function CenterContactScreen() {
           placeholder="contacto@centro.com"
           icon="mail-outline"
           keyboardType="email-address"
+          editable={!loading && !saving}
         />
 
         <ContactField
@@ -195,6 +422,7 @@ export default function CenterContactScreen() {
           placeholder="https://www.tucentro.com"
           icon="globe-outline"
           keyboardType="url"
+          editable={!loading && !saving}
         />
 
         <View style={styles.helpCard}>
@@ -222,23 +450,45 @@ export default function CenterContactScreen() {
         <Pressable
           style={[
             styles.saveButton,
-            !hasChanges && styles.saveButtonDisabled,
+            !canSave && styles.saveButtonDisabled,
           ]}
-          disabled
+          onPress={() => void handleSave()}
+          disabled={!canSave}
         >
-          <Ionicons
-            name="save-outline"
-            size={19}
-            color="#FFFFFF"
-          />
+          {saving ? (
+            <>
+              <ActivityIndicator
+                size="small"
+                color="#FFFFFF"
+              />
 
-          <Text style={styles.saveButtonText}>
-            Guardar cambios
-          </Text>
+              <Text style={styles.saveButtonText}>
+                Guardando cambios...
+              </Text>
+            </>
+          ) : (
+            <>
+              <Ionicons
+                name="save-outline"
+                size={19}
+                color="#FFFFFF"
+              />
+
+              <Text style={styles.saveButtonText}>
+                Guardar cambios
+              </Text>
+            </>
+          )}
         </Pressable>
 
         <Text style={styles.footerHint}>
-          Activaremos el guardado seguro próximamente.
+          {loading
+            ? 'Cargando información de contacto...'
+            : saving
+              ? 'Actualizando los datos de contacto...'
+              : hasChanges
+                ? 'Tienes cambios pendientes de guardar.'
+                : 'Todos los cambios están guardados.'}
         </Text>
       </View>
     </KeyboardAvoidingView>

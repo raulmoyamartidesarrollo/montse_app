@@ -1,5 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
+    ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -10,11 +12,20 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import {
+  useFocusEffect,
+  useNavigation,
+  useRoute,
+} from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../../theme/colors';
-import type { CenterSettings } from '../../services/centers';
+import {
+  getCenterSettings,
+  updateCenterSettings,
+  type CenterAddress,
+  type CenterSettings,
+} from '../../services/centers';
 
 type AddressRouteParams = {
   center: CenterSettings;
@@ -25,6 +36,7 @@ type AddressFieldProps = {
   value: string;
   onChangeText: (value: string) => void;
   placeholder: string;
+  editable?: boolean;
   keyboardType?: 'default' | 'number-pad';
 };
 
@@ -33,6 +45,7 @@ function AddressField({
   value,
   onChangeText,
   placeholder,
+  editable = true,
   keyboardType = 'default',
 }: AddressFieldProps) {
   return (
@@ -48,6 +61,7 @@ function AddressField({
         keyboardType={keyboardType}
         autoCapitalize="words"
         maxLength={150}
+        editable={editable}
       />
     </View>
   );
@@ -70,16 +84,76 @@ export default function CenterAddressScreen() {
   const [city, setCity] = useState(address.city ?? '');
   const [province, setProvince] = useState(address.province ?? '');
   const [country, setCountry] = useState(address.country ?? 'ES');
+  const [savedAddress, setSavedAddress] = useState<CenterAddress>({
+  ...address,
+});
+
+const [loading, setLoading] = useState(true);
+const [saving, setSaving] = useState(false);
+const applyAddress = useCallback((data: CenterAddress) => {
+  setStreet(data.street ?? '');
+  setNumber(data.number ?? '');
+  setFloor(data.floor ?? '');
+  setDoor(data.door ?? '');
+  setPostalCode(data.postalCode ?? '');
+  setCity(data.city ?? '');
+  setProvince(data.province ?? '');
+  setCountry(data.country ?? 'ES');
+
+  setSavedAddress({ ...data });
+}, []);
+
+useFocusEffect(
+  useCallback(() => {
+    let active = true;
+
+    const loadAddress = async () => {
+      try {
+        setLoading(true);
+
+        const updatedCenter = await getCenterSettings();
+
+        if (!active) return;
+
+        applyAddress(updatedCenter.address);
+      } catch (error) {
+        console.error(
+          '[CenterAddressScreen] Error cargando dirección:',
+          error
+        );
+
+        if (active) {
+          Alert.alert(
+            'Error de conexión',
+            'No se ha podido actualizar la dirección del centro.'
+          );
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadAddress();
+
+    return () => {
+      active = false;
+    };
+  }, [applyAddress])
+);
 
   const hasChanges =
-    street !== (address.street ?? '') ||
-    number !== (address.number ?? '') ||
-    floor !== (address.floor ?? '') ||
-    door !== (address.door ?? '') ||
-    postalCode !== (address.postalCode ?? '') ||
-    city !== (address.city ?? '') ||
-    province !== (address.province ?? '') ||
-    country !== (address.country ?? 'ES');
+  street !== savedAddress.street ||
+  number !== savedAddress.number ||
+  floor !== savedAddress.floor ||
+  door !== savedAddress.door ||
+  postalCode !== savedAddress.postalCode ||
+  city !== savedAddress.city ||
+  province !== savedAddress.province ||
+  country !== savedAddress.country;
+
+const canSave = hasChanges && !loading && !saving;
 
   const formattedAddress = useMemo(() => {
     const streetLine = [street, number]
@@ -116,7 +190,76 @@ export default function CenterAddressScreen() {
     province,
     country,
   ]);
+const handleSave = async () => {
+  if (!canSave) return;
 
+  const data = {
+    street: street.trim(),
+    number: number.trim(),
+    floor: floor.trim(),
+    door: door.trim(),
+    postalCode: postalCode.trim(),
+    city: city.trim(),
+    province: province.trim(),
+    country: country.trim().toUpperCase(),
+  };
+
+  // Código postal español: cinco dígitos.
+  if (
+    data.country === 'ES' &&
+    data.postalCode &&
+    !/^\d{5}$/.test(data.postalCode)
+  ) {
+    Alert.alert(
+      'Código postal incorrecto',
+      'El código postal español debe tener cinco dígitos.'
+    );
+    return;
+  }
+
+  // Código ISO 3166-1 alfa-2.
+  if (
+    data.country &&
+    !/^[A-Z]{2}$/.test(data.country)
+  ) {
+    Alert.alert(
+      'País incorrecto',
+      'Introduce un código de país de dos letras, por ejemplo ES.'
+    );
+    return;
+  }
+
+  try {
+    setSaving(true);
+
+    await updateCenterSettings({
+      section: 'address',
+      data,
+    });
+
+    // Confirmamos los datos almacenados en Firebase.
+    const updatedCenter = await getCenterSettings();
+
+    applyAddress(updatedCenter.address);
+
+    Alert.alert(
+      'Cambios guardados',
+      'La dirección del centro se ha actualizado correctamente.'
+    );
+  } catch (error) {
+    console.error(
+      '[CenterAddressScreen] Error guardando dirección:',
+      error
+    );
+
+    Alert.alert(
+      'Error al guardar',
+      'No se ha podido guardar la dirección. Inténtalo de nuevo.'
+    );
+  } finally {
+    setSaving(false);
+  }
+};
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -129,9 +272,10 @@ export default function CenterAddressScreen() {
         ]}
       >
         <Pressable
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
+  style={styles.backButton}
+  onPress={() => navigation.goBack()}
+  disabled={saving}
+>
           <Ionicons
             name="arrow-back"
             size={24}
@@ -179,11 +323,12 @@ export default function CenterAddressScreen() {
         </Text>
 
         <AddressField
-          label="Calle"
-          value={street}
-          onChangeText={setStreet}
-          placeholder="Ej. Calle Mayor"
-        />
+            label="Calle"
+            value={street}
+            onChangeText={setStreet}
+            placeholder="Ej. Calle Mayor"
+            editable={!loading && !saving}
+            />
 
         <View style={styles.row}>
           <View style={styles.halfField}>
@@ -192,6 +337,7 @@ export default function CenterAddressScreen() {
               value={number}
               onChangeText={setNumber}
               placeholder="Ej. 25"
+              editable={!loading && !saving}
             />
           </View>
 
@@ -201,6 +347,7 @@ export default function CenterAddressScreen() {
               value={floor}
               onChangeText={setFloor}
               placeholder="Ej. 1"
+              editable={!loading && !saving}
             />
           </View>
         </View>
@@ -212,6 +359,7 @@ export default function CenterAddressScreen() {
               value={door}
               onChangeText={setDoor}
               placeholder="Ej. A"
+              editable={!loading && !saving}
             />
           </View>
 
@@ -222,6 +370,7 @@ export default function CenterAddressScreen() {
               onChangeText={setPostalCode}
               placeholder="Ej. 12001"
               keyboardType="number-pad"
+              editable={!loading && !saving}
             />
           </View>
         </View>
@@ -235,6 +384,7 @@ export default function CenterAddressScreen() {
           value={city}
           onChangeText={setCity}
           placeholder="Ej. Castellón de la Plana"
+          editable={!loading && !saving}
         />
 
         <AddressField
@@ -242,6 +392,7 @@ export default function CenterAddressScreen() {
           value={province}
           onChangeText={setProvince}
           placeholder="Ej. Castellón"
+          editable={!loading && !saving}
         />
 
         <AddressField
@@ -249,6 +400,7 @@ export default function CenterAddressScreen() {
           value={country}
           onChangeText={setCountry}
           placeholder="ES"
+          editable={!loading && !saving}
         />
 
         <Text style={styles.sectionTitle}>
@@ -277,26 +429,48 @@ export default function CenterAddressScreen() {
         ]}
       >
         <Pressable
-          style={[
-            styles.saveButton,
-            !hasChanges && styles.saveButtonDisabled,
-          ]}
-          disabled
-        >
-          <Ionicons
-            name="save-outline"
-            size={19}
-            color="#FFFFFF"
-          />
+  style={[
+    styles.saveButton,
+    !canSave && styles.saveButtonDisabled,
+  ]}
+  onPress={() => void handleSave()}
+  disabled={!canSave}
+>
+  {saving ? (
+    <>
+      <ActivityIndicator
+        size="small"
+        color="#FFFFFF"
+      />
 
-          <Text style={styles.saveButtonText}>
-            Guardar cambios
-          </Text>
-        </Pressable>
+      <Text style={styles.saveButtonText}>
+        Guardando cambios...
+      </Text>
+    </>
+  ) : (
+    <>
+      <Ionicons
+        name="save-outline"
+        size={19}
+        color="#FFFFFF"
+      />
 
-        <Text style={styles.footerHint}>
-          Activaremos el guardado seguro próximamente.
-        </Text>
+      <Text style={styles.saveButtonText}>
+        Guardar cambios
+      </Text>
+    </>
+  )}
+</Pressable>
+
+<Text style={styles.footerHint}>
+  {loading
+    ? 'Cargando dirección del centro...'
+    : saving
+      ? 'Actualizando la dirección...'
+      : hasChanges
+        ? 'Tienes cambios pendientes de guardar.'
+        : 'Todos los cambios están guardados.'}
+</Text>
       </View>
     </KeyboardAvoidingView>
   );

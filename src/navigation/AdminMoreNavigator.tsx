@@ -11,6 +11,7 @@ import type { CenterSettings } from '../services/centers';
 import CenterContactScreen from '../screens/admin/CenterContactScreen';
 import CenterAddressScreen from '../screens/admin/CenterAddressScreen';
 import CenterSocialScreen from '../screens/admin/CenterSocialScreen';
+import CenterAdvancedScreen from '../screens/admin/CenterAdvancedScreen';
 
 export type AdminMoreStackParamList = {
   MoreHome: undefined;
@@ -23,10 +24,13 @@ export type AdminMoreStackParamList = {
   };
   CenterAddress: {
     center: CenterSettings;
-};
-CenterSocial: {
-  center: CenterSettings;
-};
+    };
+    CenterSocial: {
+    center: CenterSettings;
+    };
+    CenterAdvanced: {
+    center: CenterSettings;
+    };
 };
 
 const Stack =
@@ -68,6 +72,10 @@ export default function AdminMoreNavigator() {
         <Stack.Screen
         name="CenterSocial"
         component={CenterSocialScreen}
+        />
+        <Stack.Screen
+        name="CenterAdvanced"
+        component={CenterAdvancedScreen}
         />
     </Stack.Navigator>
   );

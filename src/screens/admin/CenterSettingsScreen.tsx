@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -8,7 +8,10 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import {
+  useFocusEffect,
+  useNavigation,
+} from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AdminMoreStackParamList } from '../../navigation/AdminMoreNavigator';
@@ -87,9 +90,11 @@ export default function CenterSettingsScreen() {
     }
   }, []);
 
-  useEffect(() => {
+ useFocusEffect(
+  useCallback(() => {
     void loadCenter();
-  }, [loadCenter]);
+  }, [loadCenter])
+);
 
   return (
     <View style={styles.container}>
@@ -115,7 +120,7 @@ export default function CenterSettingsScreen() {
         </Text>
       </View>
 
-      {loading ? (
+      {loading && !center ? (
         <View style={styles.centered}>
           <ActivityIndicator
             size="large"
@@ -125,7 +130,7 @@ export default function CenterSettingsScreen() {
             Cargando información...
           </Text>
         </View>
-      ) : error ? (
+      ) : error && !center ? (
         <View style={styles.centered}>
           <Ionicons
             name="alert-circle-outline"
@@ -210,7 +215,7 @@ export default function CenterSettingsScreen() {
             title="Configuración avanzada"
             description="Zona horaria y preferencias"
             icon="settings-outline"
-            onPress={() => {}}
+            onPress={() => navigation.navigate('CenterAdvanced', { center })}
           />
         </ScrollView>
       ) : null}
