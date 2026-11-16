@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+
 import {
   ActivityIndicator,
   Pressable,
@@ -7,22 +8,37 @@ import {
   Text,
   View,
 } from 'react-native';
+
 import { Ionicons } from '@expo/vector-icons';
+
 import {
   useFocusEffect,
   useNavigation,
 } from '@react-navigation/native';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { AdminMoreStackParamList } from '../../navigation/AdminMoreNavigator';
+
+import type {
+  NativeStackNavigationProp,
+} from '@react-navigation/native-stack';
+
+import type {
+  AdminMoreStackParamList,
+} from '../../navigation/AdminMoreNavigator';
 
 import { colors } from '../../theme/colors';
+
 import {
-  CenterSettings,
   getCenterSettings,
+  type CenterSettings,
 } from '../../services/centers';
 
-type IconName = React.ComponentProps<typeof Ionicons>['name'];
+// --------------------------------------------------
+// TIPOS
+// --------------------------------------------------
+
+type IconName =
+  React.ComponentProps<typeof Ionicons>['name'];
 
 type SettingsCardProps = {
   title: string;
@@ -30,6 +46,10 @@ type SettingsCardProps = {
   icon: IconName;
   onPress: () => void;
 };
+
+// --------------------------------------------------
+// COMPONENTE TARJETA
+// --------------------------------------------------
 
 function SettingsCard({
   title,
@@ -51,7 +71,10 @@ function SettingsCard({
       </View>
 
       <View style={styles.cardContent}>
-        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.cardTitle}>
+          {title}
+        </Text>
+
         <Text style={styles.cardDescription}>
           {description}
         </Text>
@@ -66,14 +89,69 @@ function SettingsCard({
   );
 }
 
+// --------------------------------------------------
+// FUNCIONES AUXILIARES
+// --------------------------------------------------
+
+function formatPrice(priceCents: number): string {
+  return (priceCents / 100).toLocaleString(
+    'es-ES',
+    {
+      style: 'currency',
+      currency: 'EUR',
+    }
+  );
+}
+
+function getPackageDescription(
+  center: CenterSettings
+): string {
+  const settings = center.sessionPackageSettings;
+
+  if (!settings?.enabled) {
+    return 'Venta de bonos desactivada';
+  }
+
+  if (
+    typeof settings.priceCents !== 'number' ||
+    settings.priceCents <= 0
+  ) {
+    return 'Precio del bono pendiente de configurar';
+  }
+
+  return `Bono de ${settings.sessionsPerPackage ?? 10} sesiones · ${formatPrice(
+  settings.priceCents
+)}`;
+}
+
+// --------------------------------------------------
+// PANTALLA PRINCIPAL
+// --------------------------------------------------
+
 export default function CenterSettingsScreen() {
   const navigation =
-  useNavigation<NativeStackNavigationProp<AdminMoreStackParamList>>();
+    useNavigation<
+      NativeStackNavigationProp<AdminMoreStackParamList>
+    >();
+
   const insets = useSafeAreaInsets();
 
-  const [center, setCenter] = useState<CenterSettings | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // --------------------------------------------------
+  // ESTADOS
+  // --------------------------------------------------
+
+  const [center, setCenter] =
+    useState<CenterSettings | null>(null);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState<string | null>(null);
+
+  // --------------------------------------------------
+  // CARGAR DATOS DEL CENTRO
+  // --------------------------------------------------
 
   const loadCenter = useCallback(async () => {
     try {
@@ -81,27 +159,46 @@ export default function CenterSettingsScreen() {
       setError(null);
 
       const data = await getCenterSettings();
+
       setCenter(data);
     } catch (err) {
-      console.error('Error al cargar el centro:', err);
-      setError('No se ha podido cargar la información del centro.');
+      console.error(
+        '[CenterSettingsScreen] Error al cargar el centro:',
+        err
+      );
+
+      setError(
+        'No se ha podido cargar la información del centro.'
+      );
     } finally {
       setLoading(false);
     }
   }, []);
 
- useFocusEffect(
-  useCallback(() => {
-    void loadCenter();
-  }, [loadCenter])
-);
+  // --------------------------------------------------
+  // RECARGAR AL VOLVER A LA PANTALLA
+  // --------------------------------------------------
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadCenter();
+    }, [loadCenter])
+  );
+
+  // --------------------------------------------------
+  // INTERFAZ
+  // --------------------------------------------------
 
   return (
     <View style={styles.container}>
+      {/* CABECERA */}
+
       <View
         style={[
           styles.header,
-          { paddingTop: insets.top + 12 },
+          {
+            paddingTop: insets.top + 12,
+          },
         ]}
       >
         <Pressable
@@ -120,12 +217,15 @@ export default function CenterSettingsScreen() {
         </Text>
       </View>
 
+      {/* CARGANDO */}
+
       {loading && !center ? (
         <View style={styles.centered}>
           <ActivityIndicator
             size="large"
             color={colors.primary}
           />
+
           <Text style={styles.message}>
             Cargando información...
           </Text>
@@ -138,7 +238,9 @@ export default function CenterSettingsScreen() {
             color={colors.primary}
           />
 
-          <Text style={styles.message}>{error}</Text>
+          <Text style={styles.message}>
+            {error}
+          </Text>
 
           <Pressable
             style={styles.retryButton}
@@ -158,9 +260,13 @@ export default function CenterSettingsScreen() {
             paddingBottom: insets.bottom + 110,
           }}
         >
+          {/* TARJETA DEL CENTRO */}
+
           <View style={styles.centerCard}>
             <View style={styles.logo}>
-              <Text style={styles.logoText}>MA</Text>
+              <Text style={styles.logoText}>
+                MA
+              </Text>
             </View>
 
             <Text style={styles.centerName}>
@@ -172,6 +278,8 @@ export default function CenterSettingsScreen() {
             </Text>
           </View>
 
+          {/* INFORMACIÓN DEL CENTRO */}
+
           <Text style={styles.sectionTitle}>
             INFORMACIÓN DEL CENTRO
           </Text>
@@ -180,7 +288,12 @@ export default function CenterSettingsScreen() {
             title="Información general"
             description="Nombre, descripción y logotipo"
             icon="business-outline"
-            onPress={() => navigation.navigate('CenterGeneral', { center })}
+            onPress={() =>
+              navigation.navigate(
+                'CenterGeneral',
+                { center }
+              )
+            }
           />
 
           <SettingsCard
@@ -191,7 +304,12 @@ export default function CenterSettingsScreen() {
               'Teléfono, WhatsApp y correo'
             }
             icon="call-outline"
-            onPress={() => navigation.navigate('CenterContact', { center })}
+            onPress={() =>
+              navigation.navigate(
+                'CenterContact',
+                { center }
+              )
+            }
           />
 
           <SettingsCard
@@ -201,27 +319,70 @@ export default function CenterSettingsScreen() {
               'Dirección y localidad'
             }
             icon="location-outline"
-            onPress={() => navigation.navigate('CenterAddress', { center })}
+            onPress={() =>
+              navigation.navigate(
+                'CenterAddress',
+                { center }
+              )
+            }
           />
 
           <SettingsCard
             title="Redes sociales"
             description="Instagram, Facebook y otras redes"
             icon="globe-outline"
-            onPress={() => navigation.navigate('CenterSocial', { center })}
+            onPress={() =>
+              navigation.navigate(
+                'CenterSocial',
+                { center }
+              )
+            }
           />
+
+          {/* GESTIÓN DE BONOS */}
+
+          <Text style={styles.sectionTitle}>
+            SERVICIOS Y BONOS
+          </Text>
+
+          <SettingsCard
+            title="Bonos de sesiones"
+            description={getPackageDescription(center)}
+            icon="ticket-outline"
+            onPress={() =>
+              navigation.navigate(
+                'CenterSessionPackages',
+                { center }
+              )
+            }
+          />
+
+          {/* CONFIGURACIÓN AVANZADA */}
+
+          <Text style={styles.sectionTitle}>
+            PREFERENCIAS
+          </Text>
 
           <SettingsCard
             title="Configuración avanzada"
             description="Zona horaria y preferencias"
             icon="settings-outline"
-            onPress={() => navigation.navigate('CenterAdvanced', { center })}
+            onPress={() =>
+              navigation.navigate(
+                'CenterAdvanced',
+                { center }
+              )
+            }
           />
         </ScrollView>
       ) : null}
     </View>
   );
 }
+
+// --------------------------------------------------
+// ESTILOS
+// --------------------------------------------------
 
 const styles = StyleSheet.create({
   container: {

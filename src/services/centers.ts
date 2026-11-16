@@ -37,6 +37,12 @@ export interface CenterBookingSettings {
   defaultDurationMinutes: number;
   recurringIntervalsWeeks: number[];
 }
+export interface CenterSessionPackageSettings {
+  enabled: boolean;
+  sessionsPerPackage: number;
+  priceCents: number;
+  currency: 'EUR';
+}
 
 export interface CenterSettings {
   name: string;
@@ -46,6 +52,7 @@ export interface CenterSettings {
   socialMedia: CenterSocialMedia;
   timezone: string;
   bookingSettings: CenterBookingSettings;
+  sessionPackageSettings: CenterSessionPackageSettings;
 }
 
 /**
@@ -83,7 +90,15 @@ export type CenterSettingsUpdate =
       data: {
         timezone: string;
       } & CenterBookingSettings;
+    }
+    | {
+    section: 'sessionPackages';
+    data: {
+      enabled: boolean;
+      sessionsPerPackage: number;
+      priceCents: number;
     };
+  };
 
 /**
  * Recupera la configuración del centro

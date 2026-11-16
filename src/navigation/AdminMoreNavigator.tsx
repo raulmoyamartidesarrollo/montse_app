@@ -7,30 +7,42 @@ import {
 import AdminMoreScreen from '../screens/admin/AdminMoreScreen';
 import CenterSettingsScreen from '../screens/admin/CenterSettingsScreen';
 import CenterGeneralScreen from '../screens/admin/CenterGeneralScreen';
-import type { CenterSettings } from '../services/centers';
 import CenterContactScreen from '../screens/admin/CenterContactScreen';
 import CenterAddressScreen from '../screens/admin/CenterAddressScreen';
 import CenterSocialScreen from '../screens/admin/CenterSocialScreen';
 import CenterAdvancedScreen from '../screens/admin/CenterAdvancedScreen';
+import CenterSessionPackagesScreen from '../screens/admin/CenterSessionPackagesScreen';
+
+import type { CenterSettings } from '../services/centers';
 
 export type AdminMoreStackParamList = {
   MoreHome: undefined;
+
   CenterSettings: undefined;
+
   CenterGeneral: {
     center: CenterSettings;
   };
+
   CenterContact: {
     center: CenterSettings;
   };
+
   CenterAddress: {
     center: CenterSettings;
-    };
-    CenterSocial: {
+  };
+
+  CenterSocial: {
     center: CenterSettings;
-    };
-    CenterAdvanced: {
+  };
+
+  CenterAdvanced: {
     center: CenterSettings;
-    };
+  };
+
+  CenterSessionPackages: {
+    center: CenterSettings;
+  };
 };
 
 const Stack =
@@ -57,26 +69,36 @@ export default function AdminMoreNavigator() {
         name="CenterSettings"
         component={CenterSettingsScreen}
       />
+
       <Stack.Screen
         name="CenterGeneral"
         component={CenterGeneralScreen}
-        />
-        <Stack.Screen
-            name="CenterContact"
-            component={CenterContactScreen}
-        />
-        <Stack.Screen
-            name="CenterAddress"
-            component={CenterAddressScreen}
-        />
-        <Stack.Screen
+      />
+
+      <Stack.Screen
+        name="CenterContact"
+        component={CenterContactScreen}
+      />
+
+      <Stack.Screen
+        name="CenterAddress"
+        component={CenterAddressScreen}
+      />
+
+      <Stack.Screen
         name="CenterSocial"
         component={CenterSocialScreen}
-        />
-        <Stack.Screen
+      />
+
+      <Stack.Screen
         name="CenterAdvanced"
         component={CenterAdvancedScreen}
-        />
+      />
+
+      <Stack.Screen
+        name="CenterSessionPackages"
+        component={CenterSessionPackagesScreen}
+      />
     </Stack.Navigator>
   );
 }

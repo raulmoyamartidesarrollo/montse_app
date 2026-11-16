@@ -672,6 +672,18 @@ export const getCenterSettings = onCall(
         recurringIntervalsWeeks:
           center?.bookingSettings?.recurringIntervalsWeeks ?? [1, 2, 3, 4],
       },
+      sessionPackageSettings: {
+        enabled:
+          center?.sessionPackageSettings?.enabled ?? false,
+
+        sessionsPerPackage:
+          center?.sessionPackageSettings?.sessionsPerPackage ?? 10,
+
+        priceCents:
+          center?.sessionPackageSettings?.priceCents ?? 0,
+
+        currency: "EUR",
+      },
     };
   }
 );
@@ -719,6 +731,7 @@ export const updateCenterSettings = onCall(
       "address",
       "socialMedia",
       "advanced",
+      "sessionPackages",
     ] as const;
 
     if (
@@ -925,6 +938,64 @@ export const updateCenterSettings = onCall(
         updates = { socialMedia: values };
         break;
       }
+      case "sessionPackages": {
+  validateKeys([
+    "enabled",
+    "priceCents",
+    "sessionsPerPackage",
+  ]);
+
+  const enabled = readBoolean("enabled");
+
+  const priceCents = input.priceCents;
+
+  const sessionsPerPackage =
+    input.sessionsPerPackage;
+
+  // Validar número de sesiones
+  if (
+    typeof sessionsPerPackage !== "number" ||
+    !Number.isInteger(sessionsPerPackage) ||
+    sessionsPerPackage < 1 ||
+    sessionsPerPackage > 100
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "El bono debe contener entre 1 y 100 sesiones."
+    );
+  }
+
+  // Validar precio
+  if (
+    typeof priceCents !== "number" ||
+    !Number.isSafeInteger(priceCents) ||
+    priceCents < 0 ||
+    priceCents > 10000000
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "El precio del bono no es válido."
+    );
+  }
+
+  if (enabled && priceCents === 0) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Debes establecer un precio mayor que cero para activar los bonos."
+    );
+  }
+
+  updates = {
+    sessionPackageSettings: {
+      enabled,
+      sessionsPerPackage,
+      priceCents,
+      currency: "EUR",
+    },
+  };
+
+  break;
+}
 
       case "advanced": {
         validateKeys([
