@@ -6,7 +6,10 @@ import {
   Timestamp,
 } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
-import { createHash } from "node:crypto";
+import {
+  createHash,
+  randomBytes,
+} from "node:crypto";
 
 initializeApp();
 
@@ -15,6 +18,43 @@ const db = getFirestore("default");
 const CENTER_ID = "montse-main";
 const MAX_ATTEMPTS = 5;
 const ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
+/**
+ * Genera un código seguro de vinculación de pacientes.
+ *
+ * Ejemplo:
+ * MAF-A7C9-2F4B-8D1E-6A3C
+ *
+ * El código original solo se entrega al crearlo.
+ * Firestore almacena únicamente su hash.
+ */
+function generatePatientLinkCode(): {
+  code: string;
+  codeHash: string;
+} {
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const numbers = "0123456789";
+
+  const random = randomBytes(7);
+
+  let code = "";
+
+  for (let i = 0; i < 3; i++) {
+    code += letters[random[i] % letters.length];
+  }
+
+  for (let i = 3; i < 7; i++) {
+    code += numbers[random[i] % numbers.length];
+  }
+
+  const codeHash = createHash("sha256")
+    .update(code)
+    .digest("hex");
+
+  return {
+    code,
+    codeHash,
+  };
+}
 
 type AdminRole = "owner" | "developer";
 
@@ -30,6 +70,17 @@ function activationError(
  *
  * No permite asignar ni modificar roles administrativos.
  */
+/**
+ * Crea el perfil de un usuario autenticado.
+ *
+ * No permite asignar ni modificar roles administrativos.
+ *
+ * IMPORTANTE:
+ * - Crea únicamente la cuenta de usuario.
+ * - NO crea automáticamente una ficha de paciente.
+ * - La ficha se vinculará posteriormente mediante un código.
+ * - Conserva los datos de usuarios existentes.
+ */
 export const ensureUserProfile = onCall(
   {
     region: "europe-west1",
@@ -44,6 +95,7 @@ export const ensureUserProfile = onCall(
     }
 
     const uid = request.auth.uid;
+
     const userRecord = await getAuth().getUser(uid);
 
     if (userRecord.disabled) {
@@ -54,13 +106,12 @@ export const ensureUserProfile = onCall(
     }
 
     const centerRef = db.collection("centers").doc(CENTER_ID);
+
     const userRef = db.collection("users").doc(uid);
-    const clientRef = centerRef.collection("clients").doc(uid);
 
     await db.runTransaction(async (transaction) => {
       const centerSnapshot = await transaction.get(centerRef);
       const userSnapshot = await transaction.get(userRef);
-      const clientSnapshot = await transaction.get(clientRef);
 
       if (!centerSnapshot.exists) {
         throw new HttpsError(
@@ -72,6 +123,7 @@ export const ensureUserProfile = onCall(
       if (!userSnapshot.exists) {
         transaction.create(userRef, {
           uid,
+
           name: userRecord.displayName || "",
           surname: "",
           email: userRecord.email || "",
@@ -79,13 +131,15 @@ export const ensureUserProfile = onCall(
           photoURL: userRecord.photoURL || "",
 
           roles: ["client"],
-            centerId: CENTER_ID,
+          centerId: CENTER_ID,
 
-            // Controla si el usuario ha completado
-            // la pantalla inicial de activación.
-            activationOnboardingCompleted: false,
+          // Todavía no tiene expediente vinculado.
+          clientId: null,
 
-            notificationsEnabled: false,
+          // Control del proceso inicial de activación.
+          activationOnboardingCompleted: false,
+
+          notificationsEnabled: false,
 
           notificationPreferences: {
             bookingCreated: true,
@@ -99,23 +153,30 @@ export const ensureUserProfile = onCall(
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         });
-      } else if (!userSnapshot.data()?.centerId) {
-        transaction.update(userRef, {
-          centerId: CENTER_ID,
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+      } else {
+        const userData = userSnapshot.data();
+
+        // Mantener los datos y permisos existentes.
+        // No sobrescribir clientId ni roles.
+        if (!userData?.centerId) {
+          transaction.update(userRef, {
+            centerId: CENTER_ID,
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
       }
 
-      // Se conserva la relación actual por compatibilidad.
-      // Antes de gestionar pacientes reales separaremos
-      // las cuentas profesionales de las fichas clínicas.
-      if (!clientSnapshot.exists) {
-        transaction.create(clientRef, {
-          userId: uid,
-          status: "active",
-          joinedAt: FieldValue.serverTimestamp(),
-        });
-      }
+      /*
+       * IMPORTANTE
+       *
+       * Ya NO creamos automáticamente:
+       *
+       * centers/{centerId}/clients/{uid}
+       *
+       * Los expedientes se gestionarán de manera
+       * independiente y podrán vincularse mediante
+       * un código de paciente.
+       */
     });
 
     return {
@@ -1115,5 +1176,1010 @@ if (
     });
 
     return { success: true };
+  }
+);
+/**
+ * Consulta pacientes del centro.
+ *
+ * La propietaria puede consultar pacientes reales.
+ * El desarrollador solo puede consultar pacientes de prueba.
+ *
+ * No devuelve información clínica.
+ */
+export const getCenterClients = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const userSnapshot = await db
+      .collection("users")
+      .doc(uid)
+      .get();
+
+    if (!userSnapshot.exists) {
+      throw new HttpsError(
+        "permission-denied",
+        "No existe el perfil de usuario."
+      );
+    }
+
+    const userData = userSnapshot.data();
+
+    const roles: string[] = Array.isArray(userData?.roles)
+      ? userData.roles
+      : [];
+
+    if (userData?.centerId !== CENTER_ID) {
+      throw new HttpsError(
+        "permission-denied",
+        "No perteneces a este centro."
+      );
+    }
+
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+    const centerSnapshot = await centerRef.get();
+
+    if (!centerSnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "El centro no existe."
+      );
+    }
+
+    const centerData = centerSnapshot.data();
+
+    const isOwner =
+      roles.includes("owner") &&
+      centerData?.ownerActivated === true &&
+      centerData?.ownerUid === uid;
+
+    const isDeveloper = roles.includes("developer");
+
+    if (!isOwner && !isDeveloper) {
+      throw new HttpsError(
+        "permission-denied",
+        "No tienes permisos para consultar pacientes."
+      );
+    }
+
+    const clientsRef = centerRef.collection("clients");
+
+    // El desarrollador solo puede consultar
+    // documentos marcados como pacientes de prueba.
+    const query = isOwner
+      ? clientsRef
+      : clientsRef.where("isTest", "==", true);
+
+    const snapshot = await query.limit(100).get();
+
+ const clients = snapshot.docs.map((document) => {
+  const data = document.data();
+
+  // La vinculación solo se considera completada
+  // cuando existe una cuenta asociada.
+  const isLinked =
+    typeof data.userId === "string" &&
+    data.userId.length > 0;
+
+  let linkingStatus: "linked" | "pending" | "none" = "none";
+
+  if (isLinked) {
+    linkingStatus = "linked";
+  } else if (
+    data.linking?.status === "pending" &&
+    typeof data.linking?.codeHash === "string"
+  ) {
+    linkingStatus = "pending";
+  }
+
+  return {
+    id: document.id,
+
+    name:
+      typeof data.name === "string"
+        ? data.name
+        : "",
+
+    surname:
+      typeof data.surname === "string"
+        ? data.surname
+        : "",
+
+    phone:
+      typeof data.phone === "string"
+        ? data.phone
+        : "",
+
+    email:
+      typeof data.email === "string"
+        ? data.email
+        : "",
+
+    status:
+      data.status === "inactive"
+        ? "inactive"
+        : "active",
+
+    isTest: data.isTest === true,
+
+    // Papelera de pacientes.
+    deleted: data.deleted === true,
+
+    // Estado de vinculación.
+    linkingStatus,
+
+    // Fecha de vinculación, si existe.
+    linkedAt:
+      isLinked && data.linking?.usedAt instanceof Timestamp
+        ? data.linking.usedAt.toDate().toISOString()
+        : null,
+  };
+});
+
+    return {
+      success: true,
+      clients,
+    };
+  }
+);
+/**
+ * Registra un paciente manualmente.
+ *
+ * Owner: crea pacientes reales.
+ * Developer: crea únicamente pacientes de prueba.
+ *
+ * No crea una cuenta de Firebase Authentication.
+ * No registra información clínica.
+ */
+export const createCenterClient = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos del paciente no son válidos."
+      );
+    }
+
+    const allowedKeys = [
+      "name",
+      "surname",
+      "phone",
+      "email",
+    ];
+
+    if (
+      Object.keys(input).some(
+        (key) => !allowedKeys.includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const readString = (
+      key: string,
+      maxLength: number
+    ): string => {
+      const value = input[key];
+
+      if (
+        typeof value !== "string" ||
+        value.length > maxLength
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          `El campo ${key} no es válido.`
+        );
+      }
+
+      return value.trim();
+    };
+
+    const name = readString("name", 100);
+    const surname = readString("surname", 150);
+    const phone = readString("phone", 30);
+    const email = readString("email", 200).toLowerCase();
+
+    if (!name || !surname || !phone) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Nombre, apellidos y teléfono son obligatorios."
+      );
+    }
+
+    if (!/^\+?[0-9\s()-]{7,30}$/.test(phone)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El teléfono no tiene un formato válido."
+      );
+    }
+
+    if (
+      email &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El correo electrónico no es válido."
+      );
+    }
+
+   
+
+    const clientRef = centerRef.collection("clients").doc();
+    const linking = generatePatientLinkCode();
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+      const centerSnapshot = await transaction.get(centerRef);
+
+      if (!userSnapshot.exists || !centerSnapshot.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se ha encontrado el usuario o el centro."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper = roles.includes("developer");
+
+      if (
+        userData?.centerId !== CENTER_ID ||
+        (!isOwner && !isDeveloper)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para registrar pacientes."
+        );
+      }
+
+      // El tipo de paciente se determina en el servidor.
+      // La aplicación no puede decidir si es de prueba.
+      const isTest = !isOwner && isDeveloper;
+
+      transaction.create(clientRef, {
+  name,
+  surname,
+  phone,
+  email,
+
+  status: "active",
+  source: "manual",
+  isTest,
+
+  // El paciente todavía no tiene cuenta vinculada.
+  userId: null,
+
+  // Código para vincular una futura cuenta.
+  linking: {
+    status: "pending",
+    codeHash: linking.codeHash,
+    createdAt: FieldValue.serverTimestamp(),
+    usedAt: null,
+    usedBy: null,
+  },
+
+  createdBy: uid,
+  createdAt: FieldValue.serverTimestamp(),
+  updatedAt: FieldValue.serverTimestamp(),
+});
+    });
+
+    return {
+  success: true,
+  clientId: clientRef.id,
+
+  // Se devuelve una única vez.
+  // No se almacena en texto plano.
+  linkingCode: linking.code,
+};
+  }
+);
+
+/**
+ * Actualiza los datos administrativos de un paciente.
+ *
+ * Owner: puede editar pacientes del centro.
+ * Developer: únicamente pacientes de prueba.
+ *
+ * No modifica citas, bonos, datos clínicos ni vinculación.
+ */
+export const updateCenterClient = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos enviados no son válidos."
+      );
+    }
+
+    const allowedKeys = [
+      "clientId",
+      "name",
+      "surname",
+      "phone",
+      "email",
+    ];
+
+    if (
+      Object.keys(input).some(
+        (key) => !allowedKeys.includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const readString = (
+      key: string,
+      maxLength: number
+    ): string => {
+      const value = input[key];
+
+      if (
+        typeof value !== "string" ||
+        value.length > maxLength
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          `El campo ${key} no es válido.`
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = readString("clientId", 150);
+    const name = readString("name", 100);
+    const surname = readString("surname", 150);
+    const phone = readString("phone", 30);
+    const email = readString("email", 200).toLowerCase();
+
+    if (
+      !clientId ||
+      clientId.includes("/") ||
+      clientId === "." ||
+      clientId === ".."
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El identificador del paciente no es válido."
+      );
+    }
+
+    if (!name || !surname || !phone) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Nombre, apellidos y teléfono son obligatorios."
+      );
+    }
+
+    if (!/^\+?[0-9\s()-]{7,30}$/.test(phone)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El teléfono no tiene un formato válido."
+      );
+    }
+
+    if (
+      email &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El correo electrónico no es válido."
+      );
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId);
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+      const centerSnapshot = await transaction.get(centerRef);
+      const clientSnapshot = await transaction.get(clientRef);
+
+      if (!userSnapshot.exists || !centerSnapshot.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se ha encontrado el usuario o el centro."
+        );
+      }
+
+      if (!clientSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "El paciente no existe."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper = roles.includes("developer");
+
+      if (userData?.centerId !== CENTER_ID) {
+        throw new HttpsError(
+          "permission-denied",
+          "No perteneces a este centro."
+        );
+      }
+
+      if (!isOwner && !isDeveloper) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para editar pacientes."
+        );
+      }
+
+      if (!isOwner && clientData?.isTest !== true) {
+        throw new HttpsError(
+          "permission-denied",
+          "Solo puedes editar pacientes de prueba."
+        );
+      }
+
+      transaction.update(clientRef, {
+        name,
+        surname,
+        phone,
+        email,
+        updatedBy: uid,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {
+      success: true,
+      clientId,
+    };
+  }
+);
+/**
+ * Activa o desactiva un paciente del centro.
+ *
+ * Owner:
+ * - Puede modificar pacientes del centro.
+ *
+ * Developer:
+ * - Solo puede modificar pacientes de prueba.
+ *
+ * No elimina fichas, citas, bonos ni historial.
+ * No modifica Firebase Authentication.
+ */
+export const setCenterClientStatus = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos enviados no son válidos."
+      );
+    }
+
+    const allowedKeys = ["clientId", "status"];
+
+    if (
+      Object.keys(input).some(
+        (key) => !allowedKeys.includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const { clientId, status } = input;
+
+    if (
+      typeof clientId !== "string" ||
+      !clientId.trim() ||
+      clientId.length > 150 ||
+      clientId.includes("/") ||
+      clientId === "." ||
+      clientId === ".."
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El identificador del paciente no es válido."
+      );
+    }
+
+    if (status !== "active" && status !== "inactive") {
+      throw new HttpsError(
+        "invalid-argument",
+        "El estado del paciente no es válido."
+      );
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId);
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+      const centerSnapshot = await transaction.get(centerRef);
+      const clientSnapshot = await transaction.get(clientRef);
+
+      if (!userSnapshot.exists || !centerSnapshot.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se ha encontrado el usuario o el centro."
+        );
+      }
+
+      if (!clientSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "El paciente no existe."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper = roles.includes("developer");
+
+      if (userData?.centerId !== CENTER_ID) {
+        throw new HttpsError(
+          "permission-denied",
+          "No perteneces a este centro."
+        );
+      }
+
+      if (!isOwner && !isDeveloper) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para modificar pacientes."
+        );
+      }
+
+      // El desarrollador nunca puede modificar
+      // pacientes reales.
+      if (!isOwner && clientData?.isTest !== true) {
+        throw new HttpsError(
+          "permission-denied",
+          "Solo puedes modificar pacientes de prueba."
+        );
+      }
+
+      // Evitamos escrituras innecesarias.
+      if (clientData?.status === status) {
+        return;
+      }
+
+      transaction.update(clientRef, {
+        status,
+        statusUpdatedBy: uid,
+        statusUpdatedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {
+      success: true,
+      clientId,
+      status,
+    };
+  }
+);
+/**
+ * Envía un paciente a la papelera.
+ *
+ * No elimina físicamente su documento.
+ * Conserva sus citas, bonos y vinculación.
+ */
+export const deleteCenterClient = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      Object.keys(input).some((key) => key !== "clientId")
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos enviados no son válidos."
+      );
+    }
+
+    const clientId = input.clientId;
+
+    if (
+      typeof clientId !== "string" ||
+      !clientId.trim() ||
+      clientId.length > 150 ||
+      clientId.includes("/") ||
+      clientId === "." ||
+      clientId === ".."
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El identificador del paciente no es válido."
+      );
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+    const clientRef = centerRef.collection("clients").doc(clientId);
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+      const centerSnapshot = await transaction.get(centerRef);
+      const clientSnapshot = await transaction.get(clientRef);
+
+      if (!userSnapshot.exists || !centerSnapshot.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se ha encontrado el usuario o el centro."
+        );
+      }
+
+      if (!clientSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "El paciente no existe."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper = roles.includes("developer");
+
+      if (
+        userData?.centerId !== CENTER_ID ||
+        (!isOwner && !isDeveloper)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para eliminar pacientes."
+        );
+      }
+
+      if (!isOwner && clientData?.isTest !== true) {
+        throw new HttpsError(
+          "permission-denied",
+          "Solo puedes eliminar pacientes de prueba."
+        );
+      }
+
+      if (clientData?.deleted === true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "El paciente ya está en la papelera."
+        );
+      }
+
+      transaction.update(clientRef, {
+        deleted: true,
+        deletedAt: FieldValue.serverTimestamp(),
+        deletedBy: uid,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {
+      success: true,
+      clientId,
+    };
+  }
+);
+/**
+ * Restaura un paciente desde la papelera.
+ *
+ * Mantiene el identificador original
+ * y todos sus datos asociados.
+ */
+export const restoreCenterClient = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      Object.keys(input).some((key) => key !== "clientId")
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos enviados no son válidos."
+      );
+    }
+
+    const clientId = input.clientId;
+
+    if (
+      typeof clientId !== "string" ||
+      !clientId.trim() ||
+      clientId.length > 150 ||
+      clientId.includes("/") ||
+      clientId === "." ||
+      clientId === ".."
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El identificador del paciente no es válido."
+      );
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+    const clientRef = centerRef.collection("clients").doc(clientId);
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+      const centerSnapshot = await transaction.get(centerRef);
+      const clientSnapshot = await transaction.get(clientRef);
+
+      if (!userSnapshot.exists || !centerSnapshot.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se ha encontrado el usuario o el centro."
+        );
+      }
+
+      if (!clientSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "El paciente no existe."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper = roles.includes("developer");
+
+      if (
+        userData?.centerId !== CENTER_ID ||
+        (!isOwner && !isDeveloper)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para restaurar pacientes."
+        );
+      }
+
+      if (!isOwner && clientData?.isTest !== true) {
+        throw new HttpsError(
+          "permission-denied",
+          "Solo puedes restaurar pacientes de prueba."
+        );
+      }
+
+      if (clientData?.deleted !== true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "El paciente no está en la papelera."
+        );
+      }
+
+      transaction.update(clientRef, {
+        deleted: false,
+        deletedAt: FieldValue.delete(),
+        deletedBy: FieldValue.delete(),
+        restoredAt: FieldValue.serverTimestamp(),
+        restoredBy: uid,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {
+      success: true,
+      clientId,
+    };
   }
 );
