@@ -211,3 +211,77 @@ export async function updateCenterClient(
 
   return response.data;
 }
+
+export interface SetCenterClientStatusInput {
+  clientId: string;
+  status: 'active' | 'inactive';
+}
+
+export interface SetCenterClientStatusResponse {
+  success: boolean;
+}
+
+export async function setCenterClientStatus(
+  input: SetCenterClientStatusInput
+): Promise<SetCenterClientStatusResponse> {
+  const callable = httpsCallable<
+    SetCenterClientStatusInput,
+    SetCenterClientStatusResponse
+  >(functions, 'setCenterClientStatus');
+
+  const response = await callable(input);
+
+  if (!response.data.success) {
+    throw new Error(
+      'No se ha podido actualizar el estado del paciente.'
+    );
+  }
+
+  return response.data;
+}
+
+/**
+ * Datos necesarios para regenerar
+ * el código de vinculación de un paciente.
+ */
+export interface RegenerateClientLinkingCodeInput {
+  clientId: string;
+}
+
+/**
+ * Respuesta de Firebase.
+ */
+export interface RegenerateClientLinkingCodeResponse {
+  success: boolean;
+  clientId: string;
+  linkingCode: string;
+  expiresAt: string;
+}
+
+/**
+ * Regenera el código de vinculación.
+ *
+ * El código anterior queda invalidado.
+ * El nuevo código solo se devuelve una vez.
+ */
+export async function regenerateClientLinkingCode(
+  input: RegenerateClientLinkingCodeInput
+): Promise<RegenerateClientLinkingCodeResponse> {
+  const callable = httpsCallable<
+    RegenerateClientLinkingCodeInput,
+    RegenerateClientLinkingCodeResponse
+  >(
+    functions,
+    'regenerateClientLinkingCode'
+  );
+
+  const response = await callable(input);
+
+  if (!response.data.success) {
+    throw new Error(
+      'No se ha podido regenerar el código de vinculación.'
+    );
+  }
+
+  return response.data;
+}

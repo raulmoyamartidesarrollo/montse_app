@@ -8,7 +8,7 @@ import {
 import { getAuth } from "firebase-admin/auth";
 import {
   createHash,
-  randomBytes,
+  randomInt,
 } from "node:crypto";
 
 initializeApp();
@@ -18,14 +18,19 @@ const db = getFirestore("default");
 const CENTER_ID = "montse-main";
 const MAX_ATTEMPTS = 5;
 const ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
+// Los códigos de vinculación caducan a los 7 días.
+const PATIENT_LINK_CODE_EXPIRY_MS =
+  7 * 24 * 60 * 60 * 1000;
 /**
- * Genera un código seguro de vinculación de pacientes.
+ * Genera un código de vinculación para pacientes.
  *
- * Ejemplo:
- * MAF-A7C9-2F4B-8D1E-6A3C
+ * Formato:
+ * 3 letras + 4 números.
  *
- * El código original solo se entrega al crearlo.
- * Firestore almacena únicamente su hash.
+ * Ejemplo: KPM4827
+ *
+ * El código original se entrega una sola vez.
+ * En Firestore se almacena únicamente su hash.
  */
 function generatePatientLinkCode(): {
   code: string;
@@ -34,16 +39,16 @@ function generatePatientLinkCode(): {
   const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ";
   const numbers = "0123456789";
 
-  const random = randomBytes(7);
-
   let code = "";
 
+  // Generar tres letras aleatorias.
   for (let i = 0; i < 3; i++) {
-    code += letters[random[i] % letters.length];
+    code += letters[randomInt(letters.length)];
   }
 
-  for (let i = 3; i < 7; i++) {
-    code += numbers[random[i] % numbers.length];
+  // Generar cuatro números aleatorios.
+  for (let i = 0; i < 4; i++) {
+    code += numbers[randomInt(numbers.length)];
   }
 
   const codeHash = createHash("sha256")
@@ -1458,12 +1463,29 @@ export const createCenterClient = onCall(
 
    
 
-    const clientRef = centerRef.collection("clients").doc();
-    const linking = generatePatientLinkCode();
+const clientRef = centerRef.collection("clients").doc();
+const linking = generatePatientLinkCode();
+
+const linkingCodeRef = centerRef
+  .collection("patientLinkCodes")
+  .doc(linking.codeHash);
+
+const linkingExpiresAt = Timestamp.fromMillis(
+  Date.now() + PATIENT_LINK_CODE_EXPIRY_MS
+);
 
     await db.runTransaction(async (transaction) => {
       const userSnapshot = await transaction.get(userRef);
       const centerSnapshot = await transaction.get(centerRef);
+      const linkingCodeSnapshot =
+        await transaction.get(linkingCodeRef);
+
+      if (linkingCodeSnapshot.exists) {
+        throw new HttpsError(
+          "already-exists",
+          "Se ha producido una coincidencia al generar el código. Inténtalo de nuevo."
+        );
+      }
 
       if (!userSnapshot.exists || !centerSnapshot.exists) {
         throw new HttpsError(
@@ -1501,32 +1523,42 @@ export const createCenterClient = onCall(
       const isTest = !isOwner && isDeveloper;
 
       transaction.create(clientRef, {
-  name,
-  surname,
-  phone,
-  email,
+        name,
+        surname,
+        phone,
+        email,
 
-  status: "active",
-  source: "manual",
-  isTest,
+        status: "active",
+        source: "manual",
+        isTest,
 
-  // El paciente todavía no tiene cuenta vinculada.
-  userId: null,
+        // El paciente todavía no tiene cuenta vinculada.
+        userId: null,
 
-  // Código para vincular una futura cuenta.
-  linking: {
-    status: "pending",
-    codeHash: linking.codeHash,
-    createdAt: FieldValue.serverTimestamp(),
-    usedAt: null,
-    usedBy: null,
-  },
+        // Código para vincular una futura cuenta.
+        linking: {
+          status: "pending",
+          codeHash: linking.codeHash,
 
-  createdBy: uid,
-  createdAt: FieldValue.serverTimestamp(),
-  updatedAt: FieldValue.serverTimestamp(),
-});
-    });
+          createdAt: FieldValue.serverTimestamp(),
+
+         expiresAt: linkingExpiresAt,
+
+          usedAt: null,
+          usedBy: null,
+        },
+
+        createdBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      transaction.create(linkingCodeRef, {
+        clientId: clientRef.id,
+        status: "pending",
+        createdAt: FieldValue.serverTimestamp(),
+        expiresAt: linkingExpiresAt,
+      });
+  });
 
     return {
   success: true,
@@ -2180,6 +2212,242 @@ export const restoreCenterClient = onCall(
     return {
       success: true,
       clientId,
+    };
+  }
+);
+/**
+ * Regenera el código de vinculación de un paciente.
+ *
+ * Owner:
+ * - Puede regenerar códigos de pacientes del centro.
+ *
+ * Developer:
+ * - Solo puede regenerar códigos de pacientes de prueba.
+ *
+ * Seguridad:
+ * - No permite pacientes eliminados o inactivos.
+ * - No permite pacientes ya vinculados.
+ * - Invalida el código anterior.
+ * - Evita códigos duplicados.
+ * - El código original solo se devuelve una vez.
+ */
+export const regenerateClientLinkingCode = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      Object.keys(input).some(
+        (key) => key !== "clientId"
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos enviados no son válidos."
+      );
+    }
+
+    const clientId = input.clientId;
+
+    if (
+      typeof clientId !== "string" ||
+      !clientId.trim() ||
+      clientId.length > 150 ||
+      clientId.includes("/") ||
+      clientId === "." ||
+      clientId === ".."
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El identificador del paciente no es válido."
+      );
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId);
+
+    // Generamos el código antes de la transacción.
+    const linking = generatePatientLinkCode();
+
+    const newCodeRef = centerRef
+      .collection("patientLinkCodes")
+      .doc(linking.codeHash);
+
+    const expiresAt = Timestamp.fromMillis(
+      Date.now() + PATIENT_LINK_CODE_EXPIRY_MS
+    );
+
+    await db.runTransaction(async (transaction) => {
+      // Todas las lecturas antes de las escrituras.
+      const userSnapshot = await transaction.get(userRef);
+      const centerSnapshot = await transaction.get(centerRef);
+      const clientSnapshot = await transaction.get(clientRef);
+      const newCodeSnapshot = await transaction.get(newCodeRef);
+      const previousCodeHash =
+  typeof clientSnapshot.data()?.linking?.codeHash === "string"
+    ? clientSnapshot.data()!.linking.codeHash
+    : null;
+
+const previousCodeRef =
+  previousCodeHash && previousCodeHash !== linking.codeHash
+    ? centerRef
+        .collection("patientLinkCodes")
+        .doc(previousCodeHash)
+    : null;
+
+const previousCodeSnapshot = previousCodeRef
+  ? await transaction.get(previousCodeRef)
+  : null;
+
+      if (!userSnapshot.exists || !centerSnapshot.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se ha encontrado el usuario o el centro."
+        );
+      }
+
+      if (!clientSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "El paciente no existe."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper = roles.includes("developer");
+
+      if (
+        userData?.centerId !== CENTER_ID ||
+        (!isOwner && !isDeveloper)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para regenerar códigos."
+        );
+      }
+
+      if (!isOwner && clientData?.isTest !== true) {
+        throw new HttpsError(
+          "permission-denied",
+          "Solo puedes modificar pacientes de prueba."
+        );
+      }
+
+      if (clientData?.deleted === true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No puedes generar códigos para pacientes eliminados."
+        );
+      }
+
+      if (clientData?.status !== "active") {
+        throw new HttpsError(
+          "failed-precondition",
+          "El paciente debe estar activo."
+        );
+      }
+
+      if (
+        typeof clientData?.userId === "string" &&
+        clientData.userId.length > 0
+      ) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Este paciente ya tiene una cuenta vinculada."
+        );
+      }
+
+      if (newCodeSnapshot.exists) {
+        throw new HttpsError(
+          "already-exists",
+          "Se ha generado un código repetido. Inténtalo de nuevo."
+        );
+      }
+
+      // Invalidamos el código anterior únicamente
+    // si su registro corresponde a este paciente.
+    if (previousCodeRef && previousCodeSnapshot?.exists) {
+      const previousCodeData = previousCodeSnapshot.data();
+
+      if (previousCodeData?.clientId !== clientId) {
+        throw new HttpsError(
+          "failed-precondition",
+          "El código anterior pertenece a otro paciente."
+        );
+      }
+
+      transaction.delete(previousCodeRef);
+    }
+
+      // Registramos el código nuevo.
+      transaction.create(newCodeRef, {
+        clientId,
+        status: "pending",
+        createdAt: FieldValue.serverTimestamp(),
+        expiresAt,
+      });
+
+      // Actualizamos la ficha del paciente.
+      transaction.update(clientRef, {
+        linking: {
+          status: "pending",
+          codeHash: linking.codeHash,
+          createdAt: FieldValue.serverTimestamp(),
+          expiresAt,
+          usedAt: null,
+          usedBy: null,
+        },
+
+        updatedBy: uid,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {
+      success: true,
+      clientId,
+      linkingCode: linking.code,
+      expiresAt: expiresAt.toDate().toISOString(),
     };
   }
 );
