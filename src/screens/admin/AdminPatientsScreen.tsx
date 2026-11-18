@@ -16,7 +16,18 @@ import {
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import {
+  useFocusEffect,
+  useNavigation,
+} from '@react-navigation/native';
+
+import type {
+  NativeStackNavigationProp,
+} from '@react-navigation/native-stack';
+
+import type {
+  AdminPatientsStackParamList,
+} from '../../navigation/AdminPatientsNavigator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import AdminHeader from '../../components/admin/AdminHeader';
@@ -154,6 +165,11 @@ function getLinkingLabel(client: CenterClient): string {
 export default function AdminPatientsScreen() {
   const insets = useSafeAreaInsets();
 
+  const navigation =
+    useNavigation<
+      NativeStackNavigationProp<AdminPatientsStackParamList>
+    >();
+
   const [clients, setClients] = useState<CenterClient[]>([]);
 
   const [patientView, setPatientView] =
@@ -185,6 +201,13 @@ const [generatedCodeExpiresAt, setGeneratedCodeExpiresAt] =
 
 const [pendingEdit, setPendingEdit] = useState(false);
 
+const [
+  pendingClinicalHistory,
+  setPendingClinicalHistory,
+] = useState<{
+  clientId: string;
+  patientName: string;
+} | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -334,6 +357,22 @@ const handleEditPatient = () => {
 
   setEditingClient(selectedClient);
   setPendingEdit(true);
+  setSelectedClientId(null);
+};
+const handleOpenClinicalHistory = () => {
+  if (!selectedClient || selectedClient.deleted) {
+    return;
+  }
+
+  setPendingClinicalHistory({
+    clientId: selectedClient.id,
+    patientName: getFullName(selectedClient),
+  });
+
+  setGeneratedLinkingCode(null);
+  setGeneratedCodeExpiresAt(null);
+
+  // Cerramos la ficha antes de navegar.
   setSelectedClientId(null);
 };
 
@@ -990,18 +1029,30 @@ const handleRegenerateLinkingCode = (
 
       {/* FICHA DEL PACIENTE */}
       <Modal
-        visible={selectedClient !== null}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        transparent={false}
-        onRequestClose={closePatientDetail}
-        onDismiss={() => {
-            if (pendingEdit) {
-            setPendingEdit(false);
-            setEditPatientVisible(true);
-            }
-        }}
-        >
+  visible={selectedClient !== null}
+  animationType="slide"
+  presentationStyle="pageSheet"
+  transparent={false}
+  onRequestClose={closePatientDetail}
+  onDismiss={() => {
+    if (pendingEdit) {
+      setPendingEdit(false);
+      setEditPatientVisible(true);
+      return;
+    }
+
+    if (pendingClinicalHistory) {
+      const patient = pendingClinicalHistory;
+
+      setPendingClinicalHistory(null);
+
+      navigation.navigate(
+        'PatientClinicalHistory',
+        patient
+      );
+    }
+  }}
+>
         <ScrollView
           style={styles.detailContainer}
           contentContainerStyle={{
@@ -1114,6 +1165,30 @@ const handleRegenerateLinkingCode = (
                       Editar datos
                     </Text>
                   </Pressable>
+                  {/* ACCESO AL HISTORIAL CLÍNICO */}
+<Pressable
+  style={[
+    styles.editButton,
+    { marginTop: 12 },
+  ]}
+  onPress={handleOpenClinicalHistory}
+>
+  <Ionicons
+    name="medkit-outline"
+    size={20}
+    color={colors.primary}
+  />
+
+  <Text style={styles.editButtonText}>
+    Historial clínico
+  </Text>
+
+  <Ionicons
+    name="chevron-forward"
+    size={18}
+    color={colors.primary}
+  />
+</Pressable>
 
                   <View style={styles.sectionCard}>
                     <Text style={styles.sectionTitle}>
