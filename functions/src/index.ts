@@ -2110,11 +2110,16 @@ export const restoreCenterClient = onCall(
     const input = request.data;
 
     if (
-      !input ||
-      typeof input !== "object" ||
-      Array.isArray(input) ||
-      Object.keys(input).some((key) => key !== "clientId")
-    ) {
+  !input ||
+  typeof input !== "object" ||
+  Array.isArray(input) ||
+  typeof input.clientId !== "string" ||
+  !input.clientId.trim() ||
+  input.clientId.length > 150 ||
+  input.clientId.includes("/") ||
+  input.clientId.trim() === "." ||
+  input.clientId.trim() === ".."
+) {
       throw new HttpsError(
         "invalid-argument",
         "Los datos enviados no son válidos."
@@ -2706,10 +2711,14 @@ export const updatePatientClinicalProfile = onCall(
 
     const clientId = input.clientId;
 
-    if (
-      typeof clientId !== "string" ||
-      !clientId.trim()
-    ) {
+if (
+  typeof clientId !== "string" ||
+  !clientId.trim() ||
+  clientId.length > 150 ||
+  clientId.includes("/") ||
+  clientId.trim() === "." ||
+  clientId.trim() === ".."
+) {
       throw new HttpsError(
         "invalid-argument",
         "El identificador del paciente no es válido."

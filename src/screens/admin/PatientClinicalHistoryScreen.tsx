@@ -1,13 +1,18 @@
-import React, { useState } from 'react';
-
+import React, {
+  useCallback,
+  useEffect,
+  useState,
+} from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
-
 import { Ionicons } from '@expo/vector-icons';
 
 import type {
@@ -21,6 +26,11 @@ import type {
 } from '../../navigation/AdminPatientsNavigator';
 
 import { colors } from '../../theme/colors';
+import {
+  getPatientClinicalProfile,
+  updatePatientClinicalProfile,
+  type PatientClinicalProfile,
+} from '../../services/clinicalHistory';
 
 type Props = NativeStackScreenProps<
   AdminPatientsStackParamList,
@@ -31,6 +41,73 @@ type ClinicalTab =
   | 'evolution'
   | 'painMap'
   | 'history';
+
+  type ClinicalForm = Pick<
+  PatientClinicalProfile,
+  | 'reasonForConsultation'
+  | 'affectedArea'
+  | 'medicalHistory'
+  | 'observations'
+  | 'patientInstructions'
+>;
+
+const emptyClinicalForm: ClinicalForm = {
+  reasonForConsultation: '',
+  affectedArea: '',
+  medicalHistory: '',
+  observations: '',
+  patientInstructions: '',
+};
+
+const clinicalFields: {
+  key: keyof ClinicalForm;
+  label: string;
+  placeholder: string;
+  maxLength: number;
+}[] = [
+  {
+    key: 'reasonForConsultation',
+    label: 'Motivo de consulta',
+    placeholder: 'Describe el motivo de la consulta...',
+    maxLength: 2000,
+  },
+  {
+    key: 'affectedArea',
+    label: 'Zona afectada',
+    placeholder: 'Indica la zona afectada...',
+    maxLength: 1000,
+  },
+  {
+    key: 'medicalHistory',
+    label: 'Antecedentes médicos',
+    placeholder: 'Lesiones, operaciones, patologías...',
+    maxLength: 5000,
+  },
+  {
+    key: 'observations',
+    label: 'Observaciones internas',
+    placeholder: 'Notas privadas del profesional...',
+    maxLength: 10000,
+  },
+  {
+    key: 'patientInstructions',
+    label: 'Indicaciones para el paciente',
+    placeholder: 'Recomendaciones para el paciente...',
+    maxLength: 5000,
+  },
+];
+
+function profileToForm(
+  profile: PatientClinicalProfile
+): ClinicalForm {
+  return {
+    reasonForConsultation: profile.reasonForConsultation,
+    affectedArea: profile.affectedArea,
+    medicalHistory: profile.medicalHistory,
+    observations: profile.observations,
+    patientInstructions: profile.patientInstructions,
+  };
+}
 
 const tabs: {
   id: ClinicalTab;
@@ -60,11 +137,129 @@ export default function PatientClinicalHistoryScreen({
 }: Props) {
   const insets = useSafeAreaInsets();
 
-  const { patientName } = route.params;
+const { clientId, patientName } = route.params;
 
-  const [activeTab, setActiveTab] =
-    useState<ClinicalTab>('evolution');
+const [activeTab, setActiveTab] =
+  useState<ClinicalTab>('evolution');
 
+const [clinicalProfile, setClinicalProfile] =
+  useState<PatientClinicalProfile | null>(null);
+
+const [loadingClinicalProfile, setLoadingClinicalProfile] =
+  useState(false);
+
+const [clinicalError, setClinicalError] =
+  useState<string | null>(null);
+
+  const [editingClinical, setEditingClinical] =
+  useState(false);
+
+const [savingClinical, setSavingClinical] =
+  useState(false);
+
+const [clinicalForm, setClinicalForm] =
+  useState<ClinicalForm>(emptyClinicalForm);
+const loadClinicalProfile = useCallback(async () => {
+  try {
+    setLoadingClinicalProfile(true);
+    setClinicalError(null);
+
+    const profile = await getPatientClinicalProfile(clientId);
+
+    setClinicalProfile(profile);
+    setClinicalForm(profileToForm(profile));
+  } catch (error) {
+    console.error(
+      'Error cargando antecedentes clínicos:',
+      error
+    );
+
+    setClinicalError(
+      'No se han podido cargar los antecedentes clínicos.'
+    );
+  } finally {
+    setLoadingClinicalProfile(false);
+  }
+}, [clientId]);
+
+useEffect(() => {
+  if (
+    activeTab === 'history' &&
+    !editingClinical &&
+    !clinicalProfile
+  ) {
+    void loadClinicalProfile();
+  }
+}, [
+  activeTab,
+  editingClinical,
+  clinicalProfile,
+  loadClinicalProfile,
+]);
+const startClinicalEditing = () => {
+  if (!clinicalProfile) return;
+
+  setClinicalForm(profileToForm(clinicalProfile));
+  setEditingClinical(true);
+};
+
+const cancelClinicalEditing = () => {
+  if (savingClinical) return;
+
+  if (clinicalProfile) {
+    setClinicalForm(profileToForm(clinicalProfile));
+  }
+
+  setEditingClinical(false);
+};
+
+const updateClinicalField = (
+  key: keyof ClinicalForm,
+  value: string
+) => {
+  setClinicalForm((current) => ({
+    ...current,
+    [key]: value,
+  }));
+};
+
+const saveClinicalProfile = async () => {
+  if (savingClinical || !clinicalProfile) return;
+
+  try {
+    setSavingClinical(true);
+
+    await updatePatientClinicalProfile({
+      clientId,
+      ...clinicalForm,
+    });
+
+    const updatedProfile = await getPatientClinicalProfile(
+      clientId
+    );
+
+    setClinicalProfile(updatedProfile);
+    setClinicalForm(profileToForm(updatedProfile));
+    setEditingClinical(false);
+
+    Alert.alert(
+      'Antecedentes guardados',
+      'La ficha clínica se ha actualizado correctamente.'
+    );
+  } catch (error) {
+    console.error(
+      'Error guardando antecedentes clínicos:',
+      error
+    );
+
+    Alert.alert(
+      'Error',
+      'No se han podido completar los cambios. Comprueba la conexión e inténtalo de nuevo.'
+    );
+  } finally {
+    setSavingClinical(false);
+  }
+};
   return (
     <View style={styles.container}>
       <View
@@ -204,28 +399,154 @@ export default function PatientClinicalHistoryScreen({
           </View>
         )}
 
-        {activeTab === 'history' && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
+ {activeTab === 'history' && (
+  <View style={styles.sectionCard}>
+    <View style={styles.sectionHeader}>
+      <Ionicons
+        name="document-text-outline"
+        size={22}
+        color={colors.primary}
+      />
+
+      <Text style={styles.sectionTitle}>
+        Antecedentes clínicos
+      </Text>
+    </View>
+
+    {loadingClinicalProfile ? (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator
+          size="large"
+          color={colors.primary}
+        />
+
+        <Text style={styles.sectionDescription}>
+          Cargando antecedentes clínicos...
+        </Text>
+      </View>
+    ) : clinicalError ? (
+      <View>
+        <Text style={styles.errorText}>
+          {clinicalError}
+        </Text>
+
+        <Pressable
+          style={styles.retryButton}
+          onPress={() => void loadClinicalProfile()}
+        >
+          <Ionicons
+            name="refresh-outline"
+            size={18}
+            color={colors.primary}
+          />
+
+          <Text style={styles.retryButtonText}>
+            Reintentar
+          </Text>
+        </Pressable>
+      </View>
+    ) : clinicalProfile ? (
+      <View>
+        {!editingClinical ? (
+          <>
+            {clinicalFields.map((field) => (
+              <View key={field.key}>
+                <Text style={styles.fieldLabel}>
+                  {field.label}
+                </Text>
+
+                <Text style={styles.fieldValue}>
+                  {clinicalProfile[field.key] ||
+                    'Sin información registrada'}
+                </Text>
+              </View>
+            ))}
+
+            <Pressable
+              style={styles.editClinicalButton}
+              onPress={startClinicalEditing}
+            >
               <Ionicons
-                name="document-text-outline"
-                size={22}
-                color={colors.primary}
+                name="create-outline"
+                size={19}
+                color={colors.surface}
               />
 
-              <Text style={styles.sectionTitle}>
-                Antecedentes clínicos
+              <Text style={styles.editClinicalButtonText}>
+                Editar antecedentes
               </Text>
-            </View>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            {clinicalFields.map((field) => (
+              <View key={field.key}>
+                <Text style={styles.fieldLabel}>
+                  {field.label}
+                </Text>
 
-            <Text style={styles.sectionDescription}>
-              Aquí mostraremos el motivo de consulta,
-              la zona afectada, los antecedentes médicos,
-              las observaciones internas y las
-              indicaciones para el paciente.
-            </Text>
-          </View>
+                <TextInput
+                  style={styles.clinicalInput}
+                  value={clinicalForm[field.key]}
+                  onChangeText={(value) =>
+                    updateClinicalField(field.key, value)
+                  }
+                  placeholder={field.placeholder}
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  textAlignVertical="top"
+                  maxLength={field.maxLength}
+                  editable={!savingClinical}
+                />
+              </View>
+            ))}
+
+            <View style={styles.clinicalActions}>
+              <Pressable
+                style={styles.cancelClinicalButton}
+                onPress={cancelClinicalEditing}
+                disabled={savingClinical}
+              >
+                <Text style={styles.cancelClinicalButtonText}>
+                  Cancelar
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={styles.saveClinicalButton}
+                onPress={() => void saveClinicalProfile()}
+                disabled={savingClinical}
+              >
+                {savingClinical ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={colors.surface}
+                  />
+                ) : (
+                  <Ionicons
+                    name="save-outline"
+                    size={18}
+                    color={colors.surface}
+                  />
+                )}
+
+                <Text style={styles.saveClinicalButtonText}>
+                  {savingClinical
+                    ? 'Guardando...'
+                    : 'Guardar'}
+                </Text>
+              </Pressable>
+            </View>
+          </>
         )}
+      </View>
+    ) : (
+      <Text style={styles.sectionDescription}>
+        No hay información clínica disponible.
+      </Text>
+    )}
+  </View>
+)}
       </ScrollView>
     </View>
   );
@@ -375,4 +696,118 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: 23,
   },
+  loadingContainer: {
+  alignItems: 'center',
+  paddingVertical: 25,
+  gap: 12,
+},
+
+errorText: {
+  fontFamily: 'PlusJakartaSans_400Regular',
+  fontSize: 13,
+  color: colors.error,
+  lineHeight: 20,
+},
+
+retryButton: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+  marginTop: 15,
+  paddingVertical: 12,
+  borderRadius: 12,
+  backgroundColor: colors.background,
+},
+
+retryButtonText: {
+  fontFamily: 'PlusJakartaSans_600SemiBold',
+  fontSize: 13,
+  color: colors.primary,
+},
+
+fieldLabel: {
+  fontFamily: 'PlusJakartaSans_700Bold',
+  fontSize: 13,
+  color: colors.text,
+  marginTop: 18,
+  marginBottom: 6,
+},
+
+fieldValue: {
+  fontFamily: 'PlusJakartaSans_400Regular',
+  fontSize: 13,
+  lineHeight: 21,
+  color: colors.textSecondary,
+},
+clinicalInput: {
+  minHeight: 95,
+  borderWidth: 1,
+  borderColor: colors.surfaceBorder,
+  backgroundColor: colors.background,
+  borderRadius: 12,
+  paddingHorizontal: 14,
+  paddingVertical: 12,
+  fontFamily: 'PlusJakartaSans_400Regular',
+  fontSize: 14,
+  lineHeight: 21,
+  color: colors.text,
+},
+
+editClinicalButton: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+  marginTop: 25,
+  paddingVertical: 15,
+  borderRadius: 12,
+  backgroundColor: colors.primary,
+},
+
+editClinicalButtonText: {
+  fontFamily: 'PlusJakartaSans_600SemiBold',
+  fontSize: 14,
+  color: colors.surface,
+},
+
+clinicalActions: {
+  flexDirection: 'row',
+  gap: 12,
+  marginTop: 25,
+},
+
+cancelClinicalButton: {
+  flex: 1,
+  alignItems: 'center',
+  justifyContent: 'center',
+  paddingVertical: 15,
+  borderRadius: 12,
+  backgroundColor: colors.background,
+  borderWidth: 1,
+  borderColor: colors.surfaceBorder,
+},
+
+cancelClinicalButtonText: {
+  fontFamily: 'PlusJakartaSans_600SemiBold',
+  fontSize: 14,
+  color: colors.text,
+},
+
+saveClinicalButton: {
+  flex: 1,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+  paddingVertical: 15,
+  borderRadius: 12,
+  backgroundColor: colors.primary,
+},
+
+saveClinicalButtonText: {
+  fontFamily: 'PlusJakartaSans_600SemiBold',
+  fontSize: 14,
+  color: colors.surface,
+},
 });
