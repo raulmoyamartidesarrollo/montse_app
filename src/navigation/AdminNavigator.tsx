@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import AdminHomeScreen from '../screens/admin/AdminHomeScreen';
 import AdminMoreNavigator from './AdminMoreNavigator';
-import AdminPatientsScreen from '../screens/admin/AdminPatientsScreen';
+import AdminPatientsNavigator from './AdminPatientsNavigator';
 
 type AdminTabParamList = {
   Inicio: undefined;
@@ -167,7 +167,7 @@ export default function AdminNavigator() {
 
       <Tab.Screen
         name="Pacientes"
-          component={AdminPatientsScreen}
+          component={AdminPatientsNavigator}
       />
 
       <Tab.Screen

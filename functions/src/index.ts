@@ -2110,11 +2110,16 @@ export const restoreCenterClient = onCall(
     const input = request.data;
 
     if (
-      !input ||
-      typeof input !== "object" ||
-      Array.isArray(input) ||
-      Object.keys(input).some((key) => key !== "clientId")
-    ) {
+  !input ||
+  typeof input !== "object" ||
+  Array.isArray(input) ||
+  typeof input.clientId !== "string" ||
+  !input.clientId.trim() ||
+  input.clientId.length > 150 ||
+  input.clientId.includes("/") ||
+  input.clientId.trim() === "." ||
+  input.clientId.trim() === ".."
+) {
       throw new HttpsError(
         "invalid-argument",
         "Los datos enviados no son válidos."
@@ -2448,6 +2453,404 @@ const previousCodeSnapshot = previousCodeRef
       clientId,
       linkingCode: linking.code,
       expiresAt: expiresAt.toDate().toISOString(),
+    };
+  }
+);
+
+/**
+ * Obtiene la ficha clínica de un paciente.
+ *
+ * Permisos:
+ * - Owner: pacientes del centro.
+ * - Developer: únicamente pacientes de prueba.
+ * - Client: únicamente su ficha vinculada.
+ *
+ * Las observaciones internas nunca se devuelven
+ * al paciente.
+ */
+export const getPatientClinicalProfile = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      typeof input.clientId !== "string" ||
+      !input.clientId.trim()
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El identificador del paciente no es válido."
+      );
+    }
+
+    const clientId = input.clientId.trim();
+
+    const userSnapshot = await db
+      .collection("users")
+      .doc(uid)
+      .get();
+
+    if (!userSnapshot.exists) {
+      throw new HttpsError(
+        "permission-denied",
+        "No existe el perfil de usuario."
+      );
+    }
+
+    const userData = userSnapshot.data();
+
+    if (userData?.centerId !== CENTER_ID) {
+      throw new HttpsError(
+        "permission-denied",
+        "No perteneces a este centro."
+      );
+    }
+
+    const roles: string[] = Array.isArray(userData?.roles)
+      ? userData.roles
+      : [];
+
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const centerSnapshot = await centerRef.get();
+
+    if (!centerSnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "El centro no existe."
+      );
+    }
+
+    const centerData = centerSnapshot.data();
+
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId);
+
+    const clientSnapshot = await clientRef.get();
+
+    if (!clientSnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "El paciente no existe."
+      );
+    }
+
+    const clientData = clientSnapshot.data();
+
+    if (clientData?.deleted === true) {
+      throw new HttpsError(
+        "failed-precondition",
+        "El paciente está en la papelera."
+      );
+    }
+
+    const isOwner =
+      roles.includes("owner") &&
+      centerData?.ownerActivated === true &&
+      centerData?.ownerUid === uid;
+
+    const isDeveloper =
+      roles.includes("developer") &&
+      clientData?.isTest === true;
+
+    const isPatient =
+      roles.includes("client") &&
+      userData?.clientId === clientId &&
+      clientData?.userId === uid &&
+      clientData?.status === "active";
+
+    if (!isOwner && !isDeveloper && !isPatient) {
+      throw new HttpsError(
+        "permission-denied",
+        "No tienes permisos para consultar esta ficha clínica."
+      );
+    }
+    // Acceso profesional autorizado.
+    // El rol de paciente nunca concede acceso a notas internas.
+    const canReadInternalNotes = isOwner || isDeveloper;
+    const clinicalSnapshot = await clientRef
+      .collection("clinical")
+      .doc("profile")
+      .get();
+
+    const clinicalData = clinicalSnapshot.data();
+
+    const readString = (value: unknown): string =>
+      typeof value === "string" ? value : "";
+
+    const toISOString = (value: unknown): string | null =>
+      value instanceof Timestamp
+        ? value.toDate().toISOString()
+        : null;
+
+    const profile = {
+      clientId,
+
+      reasonForConsultation: readString(
+        clinicalData?.reasonForConsultation
+      ),
+
+      affectedArea: readString(
+        clinicalData?.affectedArea
+      ),
+
+      medicalHistory: readString(
+        clinicalData?.medicalHistory
+      ),
+
+      // Nunca enviar notas internas al paciente.
+     observations: canReadInternalNotes
+      ? readString(clinicalData?.observations)
+      : "",
+
+      patientInstructions: readString(
+        clinicalData?.patientInstructions
+      ),
+
+      createdAt: toISOString(clinicalData?.createdAt),
+      updatedAt: toISOString(clinicalData?.updatedAt),
+
+      updatedBy: canReadInternalNotes
+  ? readString(clinicalData?.updatedBy)
+  : null,
+    };
+
+    return {
+      success: true,
+      profile,
+    };
+  }
+);
+
+/**
+ * Crea o actualiza la ficha clínica.
+ *
+ * El paciente no puede modificarla.
+ */
+export const updatePatientClinicalProfile = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos clínicos no son válidos."
+      );
+    }
+
+    const allowedKeys = [
+      "clientId",
+      "reasonForConsultation",
+      "affectedArea",
+      "medicalHistory",
+      "observations",
+      "patientInstructions",
+    ];
+
+    if (
+      Object.keys(input).some(
+        (key) => !allowedKeys.includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const clientId = input.clientId;
+
+if (
+  typeof clientId !== "string" ||
+  !clientId.trim() ||
+  clientId.length > 150 ||
+  clientId.includes("/") ||
+  clientId.trim() === "." ||
+  clientId.trim() === ".."
+) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El identificador del paciente no es válido."
+      );
+    }
+
+    const readString = (
+      key: string,
+      maxLength: number
+    ): string => {
+      const value = input[key];
+
+      if (
+        typeof value !== "string" ||
+        value.length > maxLength
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          `El campo ${key} no es válido.`
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clinicalData = {
+      reasonForConsultation: readString(
+        "reasonForConsultation",
+        2000
+      ),
+
+      affectedArea: readString(
+        "affectedArea",
+        1000
+      ),
+
+      medicalHistory: readString(
+        "medicalHistory",
+        5000
+      ),
+
+      observations: readString(
+        "observations",
+        10000
+      ),
+
+      patientInstructions: readString(
+        "patientInstructions",
+        5000
+      ),
+    };
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId.trim());
+
+    const clinicalRef = clientRef
+      .collection("clinical")
+      .doc("profile");
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+      const centerSnapshot = await transaction.get(centerRef);
+      const clientSnapshot = await transaction.get(clientRef);
+      const clinicalSnapshot = await transaction.get(clinicalRef);
+
+      if (
+        !userSnapshot.exists ||
+        !centerSnapshot.exists ||
+        !clientSnapshot.exists
+      ) {
+        throw new HttpsError(
+          "not-found",
+          "No se ha encontrado el usuario, centro o paciente."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper =
+        roles.includes("developer") &&
+        clientData?.isTest === true;
+
+      if (
+        userData?.centerId !== CENTER_ID ||
+        (!isOwner && !isDeveloper)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para modificar esta ficha clínica."
+        );
+      }
+
+      if (clientData?.deleted === true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se puede editar un paciente eliminado."
+        );
+      }
+
+      if (clinicalSnapshot.exists) {
+        transaction.update(clinicalRef, {
+          ...clinicalData,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: uid,
+        });
+      } else {
+        transaction.create(clinicalRef, {
+          ...clinicalData,
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: uid,
+        });
+      }
+    });
+
+    return {
+      success: true,
+      clientId: clientId.trim(),
     };
   }
 );

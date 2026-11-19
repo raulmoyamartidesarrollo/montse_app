@@ -3,9 +3,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ES2022",
-    "lib": [
-      "ES2022"
-    ],
+    "lib": ["ES2022"],
     "outDir": "lib",
     "rootDir": "src",
     "strict": true,
@@ -13,14 +11,9 @@
     "noImplicitReturns": true,
     "noUnusedLocals": true,
     "sourceMap": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noEmit": false
   },
-  "include": [
-    "src/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    "lib"
-  ],
-  "extends": "expo/tsconfig.base"
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "lib"]
 }
