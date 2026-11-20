@@ -242,3 +242,69 @@ test("Retirar el rol owner bloquea el acceso clínico", async () => {
 
   console.log("  ✅ Rol owner restaurado: acceso permitido");
 });
+
+test("Cambiar el centro del propietario bloquea el acceso clínico", async () => {
+  const { getFirestore } = require("firebase-admin/firestore");
+
+  const db = getFirestore("default");
+  const userRef = db.collection("users").doc(OWNER_UID);
+
+  const userSnapshot = await userRef.get();
+
+  assert.equal(userSnapshot.exists, true);
+
+  const originalCenterId = userSnapshot.data().centerId;
+
+  assert.equal(originalCenterId, "montse-main");
+
+  const endpoint =
+    `http://127.0.0.1:5001/${PROJECT_ID}` +
+    "/europe-west1/getPatientClinicalEpisodes";
+
+  async function requestEpisodes() {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${tokens[OWNER_UID]}`,
+      },
+      body: JSON.stringify({
+        data: {
+          clientId: "test-patient-a",
+        },
+      }),
+    });
+
+    return response.status;
+  }
+
+  assert.equal(await requestEpisodes(), 200);
+
+  console.log("  ✅ Propietario del centro: acceso permitido");
+
+  try {
+    await userRef.update({
+      centerId: "centro-ficticio-sin-acceso",
+    });
+
+    const blockedStatus = await requestEpisodes();
+
+    assert.equal(
+      blockedStatus,
+      403,
+      "El propietario ha podido acceder desde otro centro"
+    );
+
+    console.log("  ✅ Cambio de centro: acceso bloqueado");
+  } finally {
+    await userRef.update({
+      centerId: originalCenterId,
+    });
+
+    console.log("  ✅ Centro original restaurado");
+  }
+
+  assert.equal(await requestEpisodes(), 200);
+
+  console.log("  ✅ Acceso recuperado correctamente");
+});

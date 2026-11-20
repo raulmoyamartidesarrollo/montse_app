@@ -4433,9 +4433,10 @@ export const createPatientClinicalSession = onCall(
     const auditRef = sessionRef
       .collection("events")
       .doc();
-      const episodeAuditRef = episodeRef
-  .collection("events")
-  .doc();
+
+    const episodeAuditRef = episodeRef
+      .collection("events")
+      .doc();
 
     await db.runTransaction(async (transaction) => {
       // Todas las lecturas antes de las escrituras.
@@ -4517,20 +4518,20 @@ export const createPatientClinicalSession = onCall(
       });
 
       // Auditoría propia de la sesión.
-transaction.create(auditRef, {
-  type: "created",
-  performedBy: uid,
-  createdAt: FieldValue.serverTimestamp(),
-});
+      transaction.create(auditRef, {
+        type: "created",
+        performedBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
 
-// Auditoría general del episodio clínico.
-transaction.create(episodeAuditRef, {
-  type: "session_created",
-  sessionId: sessionRef.id,
-  sessionDate,
-  performedBy: uid,
-  createdAt: FieldValue.serverTimestamp(),
-});
+      // Auditoría general del episodio clínico.
+      transaction.create(episodeAuditRef, {
+        type: "session_created",
+        sessionId: sessionRef.id,
+        sessionDate,
+        performedBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
     });
 
     return {
