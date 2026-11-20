@@ -32,12 +32,23 @@ import {
   type PatientClinicalProfile,
 } from '../../services/clinicalHistory';
 
+import ClinicalEpisodesList from '../../components/clinical/ClinicalEpisodesList';
+import type { ClinicalEpisode } from '../../services/clinicalEpisodes';
+import CreateClinicalEpisodeForm from '../../components/clinical/CreateClinicalEpisodeForm';
+import ClinicalEpisodeDetail from '../../components/clinical/ClinicalEpisodeDetail';
+import EditClinicalEpisodeForm from '../../components/clinical/EditClinicalEpisodeForm';
+import CloseClinicalEpisodeForm from '../../components/clinical/CloseClinicalEpisodeForm';
+import {
+  reopenPatientClinicalEpisode,
+} from '../../services/clinicalEpisodes';
+
 type Props = NativeStackScreenProps<
   AdminPatientsStackParamList,
   'PatientClinicalHistory'
 >;
 
 type ClinicalTab =
+  | 'episodes'
   | 'evolution'
   | 'painMap'
   | 'history';
@@ -114,6 +125,11 @@ const tabs: {
   label: string;
   icon: React.ComponentProps<typeof Ionicons>['name'];
 }[] = [
+    {
+  id: 'episodes',
+  label: 'Episodios',
+  icon: 'albums-outline',
+},
   {
     id: 'evolution',
     label: 'Evolución',
@@ -140,7 +156,20 @@ export default function PatientClinicalHistoryScreen({
 const { clientId, patientName } = route.params;
 
 const [activeTab, setActiveTab] =
-  useState<ClinicalTab>('evolution');
+  useState<ClinicalTab>('episodes');
+  const [creatingEpisode, setCreatingEpisode] = useState(false);
+
+const [episodesRefreshKey, setEpisodesRefreshKey] = useState(0);
+const [selectedEpisodeId, setSelectedEpisodeId] =
+  useState<string | null>(null);
+  const [editingEpisode, setEditingEpisode] =
+  useState<ClinicalEpisode | null>(null);
+const [closingEpisode, setClosingEpisode] =
+  useState<ClinicalEpisode | null>(null);
+  const [reopeningEpisode, setReopeningEpisode] =
+  useState(false);
+const [episodeDetailRefreshKey, setEpisodeDetailRefreshKey] =
+  useState(0);
 
 const [clinicalProfile, setClinicalProfile] =
   useState<PatientClinicalProfile | null>(null);
@@ -260,6 +289,137 @@ const saveClinicalProfile = async () => {
     setSavingClinical(false);
   }
 };
+const handleCreateEpisode = () => {
+  setCreatingEpisode(true);
+};
+
+const handleCancelCreateEpisode = () => {
+  setCreatingEpisode(false);
+};
+
+const handleEpisodeCreated = () => {
+  setCreatingEpisode(false);
+  setEpisodesRefreshKey((current) => current + 1);
+};
+
+const handleSelectEpisode = (episode: ClinicalEpisode) => {
+  setSelectedEpisodeId(episode.episodeId);
+};
+
+const handleBackToEpisodes = () => {
+  setSelectedEpisodeId(null);
+  setEpisodesRefreshKey((current) => current + 1);
+};
+const handleEditEpisode = (episode: ClinicalEpisode) => {
+  if (episode.status !== 'open') {
+    Alert.alert(
+      'Episodio cerrado',
+      'Debes reabrir este episodio antes de editarlo.'
+    );
+    return;
+  }
+
+  setEditingEpisode(episode);
+};
+
+const handleCancelEditEpisode = () => {
+  setEditingEpisode(null);
+};
+
+const handleEpisodeUpdated = () => {
+  setEditingEpisode(null);
+
+  setEpisodeDetailRefreshKey((current) => current + 1);
+  setEpisodesRefreshKey((current) => current + 1);
+};
+
+const handleCloseEpisode = (episode: ClinicalEpisode) => {
+  if (episode.status !== 'open') {
+    Alert.alert(
+      'Episodio cerrado',
+      'Este episodio ya está cerrado.'
+    );
+    return;
+  }
+
+  setClosingEpisode(episode);
+};
+
+const handleCancelCloseEpisode = () => {
+  setClosingEpisode(null);
+};
+
+const handleEpisodeClosed = () => {
+  setClosingEpisode(null);
+
+  setEpisodeDetailRefreshKey((current) => current + 1);
+  setEpisodesRefreshKey((current) => current + 1);
+};
+
+const handleReopenEpisode = (episode: ClinicalEpisode) => {
+  if (reopeningEpisode) return;
+
+  if (episode.status !== 'closed') {
+    Alert.alert(
+      'Episodio abierto',
+      'Este episodio ya se encuentra abierto.'
+    );
+    return;
+  }
+
+  Alert.alert(
+    'Reabrir episodio clínico',
+    `¿Quieres reabrir el episodio "${episode.title}"?\n\nPodrás volver a modificar su información clínica.`,
+    [
+      {
+        text: 'Cancelar',
+        style: 'cancel',
+      },
+      {
+        text: 'Reabrir episodio',
+        onPress: () => {
+          void (async () => {
+            if (reopeningEpisode) return;
+
+            try {
+              setReopeningEpisode(true);
+
+              await reopenPatientClinicalEpisode(
+                episode.clientId,
+                episode.episodeId
+              );
+
+              setEpisodeDetailRefreshKey(
+                (current) => current + 1
+              );
+
+              setEpisodesRefreshKey(
+                (current) => current + 1
+              );
+
+              Alert.alert(
+                'Episodio reabierto',
+                'El episodio clínico vuelve a estar abierto.'
+              );
+            } catch (error) {
+              console.error(
+                'Error reabriendo episodio clínico:',
+                error
+              );
+
+              Alert.alert(
+                'Error',
+                'No se ha podido reabrir el episodio. Comprueba la conexión e inténtalo de nuevo.'
+              );
+            } finally {
+              setReopeningEpisode(false);
+            }
+          })();
+        },
+      },
+    ]
+  );
+};
   return (
     <View style={styles.container}>
       <View
@@ -354,6 +514,46 @@ const saveClinicalProfile = async () => {
             );
           })}
         </View>
+{activeTab === 'episodes' && (
+  closingEpisode ? (
+    <CloseClinicalEpisodeForm
+      key={`${closingEpisode.clientId}-${closingEpisode.episodeId}`}
+      episode={closingEpisode}
+      onCancel={handleCancelCloseEpisode}
+      onClosed={handleEpisodeClosed}
+    />
+  ) : editingEpisode ? (
+    <EditClinicalEpisodeForm
+      key={`${editingEpisode.clientId}-${editingEpisode.episodeId}`}
+      episode={editingEpisode}
+      onCancel={handleCancelEditEpisode}
+      onUpdated={handleEpisodeUpdated}
+    />
+  ) : selectedEpisodeId ? (
+    <ClinicalEpisodeDetail
+      key={`${clientId}-${selectedEpisodeId}-${episodeDetailRefreshKey}`}
+      clientId={clientId}
+      episodeId={selectedEpisodeId}
+      onBack={handleBackToEpisodes}
+      onEdit={handleEditEpisode}
+      onClose={handleCloseEpisode}
+      onReopen={handleReopenEpisode}
+    />
+  ) : creatingEpisode ? (
+    <CreateClinicalEpisodeForm
+      clientId={clientId}
+      onCancel={handleCancelCreateEpisode}
+      onCreated={handleEpisodeCreated}
+    />
+  ) : (
+    <ClinicalEpisodesList
+      key={`${clientId}-${episodesRefreshKey}`}
+      clientId={clientId}
+      onCreateEpisode={handleCreateEpisode}
+      onSelectEpisode={handleSelectEpisode}
+    />
+  )
+)}
 
         {activeTab === 'evolution' && (
           <View style={styles.sectionCard}>

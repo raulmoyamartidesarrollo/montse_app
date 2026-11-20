@@ -16,6 +16,84 @@ initializeApp();
 const db = getFirestore("default");
 
 const CENTER_ID = "montse-main";
+/**
+ * Comprueba si un usuario puede acceder a los datos clínicos
+ * de un paciente.
+ *
+ * Owner: pacientes del centro.
+ * Developer: únicamente pacientes de prueba.
+ */
+async function assertClinicalPatientAccess(
+  uid: string,
+  clientId: string
+): Promise<void> {
+  const userRecord = await getAuth().getUser(uid);
+
+  if (userRecord.disabled) {
+    throw new HttpsError(
+      "permission-denied",
+      "La cuenta está deshabilitada."
+    );
+  }
+
+  const userRef = db.collection("users").doc(uid);
+  const centerRef = db.collection("centers").doc(CENTER_ID);
+  const clientRef = centerRef
+    .collection("clients")
+    .doc(clientId);
+
+  const [userSnapshot, centerSnapshot, clientSnapshot] =
+    await Promise.all([
+      userRef.get(),
+      centerRef.get(),
+      clientRef.get(),
+    ]);
+
+  if (
+    !userSnapshot.exists ||
+    !centerSnapshot.exists ||
+    !clientSnapshot.exists
+  ) {
+    throw new HttpsError(
+      "not-found",
+      "No se ha encontrado el usuario, centro o paciente."
+    );
+  }
+
+  const userData = userSnapshot.data();
+  const centerData = centerSnapshot.data();
+  const clientData = clientSnapshot.data();
+
+  const roles: string[] = Array.isArray(userData?.roles)
+    ? userData.roles
+    : [];
+
+  const isOwner =
+    roles.includes("owner") &&
+    centerData?.ownerActivated === true &&
+    centerData?.ownerUid === uid;
+
+  const isDeveloper =
+    roles.includes("developer") &&
+    clientData?.isTest === true;
+
+  if (
+    userData?.centerId !== CENTER_ID ||
+    (!isOwner && !isDeveloper)
+  ) {
+    throw new HttpsError(
+      "permission-denied",
+      "No tienes permisos para acceder a este paciente."
+    );
+  }
+
+  if (clientData?.deleted === true) {
+    throw new HttpsError(
+      "failed-precondition",
+      "El paciente está en la papelera."
+    );
+  }
+}
 const MAX_ATTEMPTS = 5;
 const ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
 // Los códigos de vinculación caducan a los 7 días.
@@ -2851,6 +2929,1767 @@ if (
     return {
       success: true,
       clientId: clientId.trim(),
+    };
+  }
+);
+/**
+ * Crea un episodio clínico para un paciente.
+ *
+ * Un paciente puede tener varios episodios abiertos.
+ *
+ * Permisos:
+ * - Owner: pacientes de su centro.
+ * - Developer: únicamente pacientes de prueba.
+ */
+export const createPatientClinicalEpisode = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos del episodio no son válidos."
+      );
+    }
+
+    const allowedKeys = [
+      "clientId",
+      "title",
+      "reasonForConsultation",
+      "affectedArea",
+      "observations",
+    ];
+
+    if (
+      Object.keys(input).some(
+        (key) => !allowedKeys.includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const clientId = input.clientId;
+
+    if (
+      typeof clientId !== "string" ||
+      !clientId.trim() ||
+      clientId.length > 150 ||
+      clientId.includes("/") ||
+      clientId.trim() === "." ||
+      clientId.trim() === ".."
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El identificador del paciente no es válido."
+      );
+    }
+
+    const readString = (
+      key: string,
+      maxLength: number,
+      required = false
+    ): string => {
+      const value = input[key];
+
+      if (
+        typeof value !== "string" ||
+        value.length > maxLength
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          `El campo ${key} no es válido.`
+        );
+      }
+
+      const normalized = value.trim();
+
+      if (required && !normalized) {
+        throw new HttpsError(
+          "invalid-argument",
+          `El campo ${key} es obligatorio.`
+        );
+      }
+
+      return normalized;
+    };
+
+    const episodeData = {
+      title: readString("title", 200, true),
+      reasonForConsultation: readString(
+        "reasonForConsultation",
+        2000
+      ),
+      affectedArea: readString("affectedArea", 1000),
+      observations: readString("observations", 10000),
+    };
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId.trim());
+
+    const episodeRef = clientRef
+      .collection("clinicalEpisodes")
+      .doc();
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+      const centerSnapshot = await transaction.get(centerRef);
+      const clientSnapshot = await transaction.get(clientRef);
+
+      if (
+        !userSnapshot.exists ||
+        !centerSnapshot.exists ||
+        !clientSnapshot.exists
+      ) {
+        throw new HttpsError(
+          "not-found",
+          "No se ha encontrado el usuario, centro o paciente."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper =
+        roles.includes("developer") &&
+        clientData?.isTest === true;
+
+      if (
+        userData?.centerId !== CENTER_ID ||
+        (!isOwner && !isDeveloper)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para crear episodios clínicos."
+        );
+      }
+
+      if (clientData?.deleted === true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se pueden crear episodios para un paciente eliminado."
+        );
+      }
+
+      transaction.create(episodeRef, {
+        ...episodeData,
+
+        status: "open",
+
+        openedAt: FieldValue.serverTimestamp(),
+        closedAt: null,
+        closingReason: "",
+
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+
+        createdBy: uid,
+        updatedBy: uid,
+      });
+      const auditRef = episodeRef
+  .collection("events")
+  .doc();
+
+transaction.create(
+  auditRef,
+  buildClinicalEpisodeAuditEvent("created", uid, {
+    status: "open",
+  })
+);
+    });
+
+    return {
+      success: true,
+      clientId: clientId.trim(),
+      episodeId: episodeRef.id,
+    };
+  }
+);
+/**
+ * Obtiene los episodios clínicos de un paciente.
+ *
+ * Permisos:
+ * - Owner: pacientes de su centro.
+ * - Developer: únicamente pacientes de prueba.
+ *
+ * No permite acceso directo a pacientes.
+ * Comprueba los permisos antes de consultar datos clínicos.
+ */
+export const getPatientClinicalEpisodes = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // 1. Comprobar autenticación.
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    // 2. Validar los parámetros.
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      Object.keys(input).some(
+        (key) => key !== "clientId"
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos de consulta no son válidos."
+      );
+    }
+
+    if (typeof input.clientId !== "string") {
+      throw new HttpsError(
+        "invalid-argument",
+        "El identificador del paciente no es válido."
+      );
+    }
+
+    const clientId = input.clientId.trim();
+
+    if (
+      !clientId ||
+      clientId.length > 150 ||
+      clientId.includes("/") ||
+      clientId === "." ||
+      clientId === ".."
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El identificador del paciente no es válido."
+      );
+    }
+
+    // 3. Preparar referencias.
+    const userRef = db.collection("users").doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId);
+
+    // 4. Consultar únicamente documentos necesarios
+    // para verificar los permisos.
+    const [
+      userSnapshot,
+      centerSnapshot,
+      clientSnapshot,
+    ] = await Promise.all([
+      userRef.get(),
+      centerRef.get(),
+      clientRef.get(),
+    ]);
+
+    if (
+      !userSnapshot.exists ||
+      !centerSnapshot.exists ||
+      !clientSnapshot.exists
+    ) {
+      throw new HttpsError(
+        "not-found",
+        "No se ha encontrado el usuario, centro o paciente."
+      );
+    }
+
+    const userData = userSnapshot.data();
+    const centerData = centerSnapshot.data();
+    const clientData = clientSnapshot.data();
+
+    // 5. Verificar permisos.
+    const roles: string[] = Array.isArray(userData?.roles)
+      ? userData.roles
+      : [];
+
+    const isOwner =
+      roles.includes("owner") &&
+      centerData?.ownerActivated === true &&
+      centerData?.ownerUid === uid;
+
+    const isDeveloper =
+      roles.includes("developer") &&
+      clientData?.isTest === true;
+
+    if (
+      userData?.centerId !== CENTER_ID ||
+      (!isOwner && !isDeveloper)
+    ) {
+      throw new HttpsError(
+        "permission-denied",
+        "No tienes permisos para consultar estos episodios."
+      );
+    }
+
+    // 6. Impedir consultas de pacientes eliminados.
+    if (clientData?.deleted === true) {
+      throw new HttpsError(
+        "failed-precondition",
+        "El paciente está en la papelera."
+      );
+    }
+
+    // 7. Los permisos ya están comprobados.
+    // Ahora sí consultamos los datos clínicos.
+    const episodesSnapshot = await clientRef
+      .collection("clinicalEpisodes")
+      .orderBy("openedAt", "desc")
+      .limit(100)
+      .get();
+
+    // 8. Funciones de conversión.
+    const toISOString = (
+      value: unknown
+    ): string | null => {
+      return value instanceof Timestamp
+        ? value.toDate().toISOString()
+        : null;
+    };
+
+    const readString = (
+      value: unknown
+    ): string => {
+      return typeof value === "string"
+        ? value
+        : "";
+    };
+
+    // 9. Preparar respuesta.
+    const episodes = episodesSnapshot.docs.map(
+      (document) => {
+        const data = document.data();
+
+        return {
+          episodeId: document.id,
+          clientId,
+
+          title: readString(data.title),
+
+          reasonForConsultation: readString(
+            data.reasonForConsultation
+          ),
+
+          affectedArea: readString(
+            data.affectedArea
+          ),
+
+          observations: readString(
+            data.observations
+          ),
+
+          status:
+            data.status === "closed"
+              ? "closed"
+              : "open",
+
+          openedAt: toISOString(data.openedAt),
+
+          closedAt: toISOString(data.closedAt),
+
+          closingReason: readString(
+            data.closingReason
+          ),
+
+          createdAt: toISOString(data.createdAt),
+
+          updatedAt: toISOString(data.updatedAt),
+        };
+      }
+    );
+
+    // 10. Ordenar:
+    // Primero abiertos, después cerrados.
+    // Dentro de cada grupo, los más recientes primero.
+    episodes.sort((a, b) => {
+      if (a.status !== b.status) {
+        return a.status === "open" ? -1 : 1;
+      }
+
+      return (b.openedAt ?? "").localeCompare(
+        a.openedAt ?? ""
+      );
+    });
+
+    // 11. Devolver resultado.
+    return {
+      success: true,
+      clientId,
+      episodes,
+    };
+  }
+);
+/**
+ * Cierra un episodio clínico.
+ *
+ * Un paciente puede tener varios episodios abiertos.
+ * El cierre afecta únicamente al episodio indicado.
+ */
+export const closePatientClinicalEpisode = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      Object.keys(input).some(
+        (key) =>
+          !["clientId", "episodeId", "closingReason"].includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos de cierre no son válidos."
+      );
+    }
+
+    const validateId = (value: unknown): string => {
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.length > 150 ||
+        value.includes("/") ||
+        value.trim() === "." ||
+        value.trim() === ".."
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador no es válido."
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = validateId(input.clientId);
+    const episodeId = validateId(input.episodeId);
+
+    if (
+      typeof input.closingReason !== "string" ||
+      input.closingReason.trim().length > 2000
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El motivo de cierre no es válido."
+      );
+    }
+
+    const closingReason = input.closingReason.trim();
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId);
+
+    const episodeRef = clientRef
+      .collection("clinicalEpisodes")
+      .doc(episodeId);
+
+    await db.runTransaction(async (transaction) => {
+  // 1. Consultar usuario, centro y paciente.
+  const userSnapshot = await transaction.get(userRef);
+  const centerSnapshot = await transaction.get(centerRef);
+  const clientSnapshot = await transaction.get(clientRef);
+
+  if (
+    !userSnapshot.exists ||
+    !centerSnapshot.exists ||
+    !clientSnapshot.exists
+  ) {
+    throw new HttpsError(
+      "not-found",
+      "No se ha encontrado el usuario, centro o paciente."
+    );
+  }
+
+  const userData = userSnapshot.data();
+  const centerData = centerSnapshot.data();
+  const clientData = clientSnapshot.data();
+
+  const roles: string[] = Array.isArray(userData?.roles)
+    ? userData.roles
+    : [];
+
+  // 2. Comprobar permisos.
+  const isOwner =
+    roles.includes("owner") &&
+    centerData?.ownerActivated === true &&
+    centerData?.ownerUid === uid;
+
+  const isDeveloper =
+    roles.includes("developer") &&
+    clientData?.isTest === true;
+
+  if (
+    userData?.centerId !== CENTER_ID ||
+    (!isOwner && !isDeveloper)
+  ) {
+    throw new HttpsError(
+      "permission-denied",
+      "No tienes permisos para cerrar este episodio."
+    );
+  }
+
+  if (clientData?.deleted === true) {
+    throw new HttpsError(
+      "failed-precondition",
+      "El paciente está en la papelera."
+    );
+  }
+
+  // 3. Consultar el episodio después de autorizar.
+  const episodeSnapshot = await transaction.get(episodeRef);
+
+  if (!episodeSnapshot.exists) {
+    throw new HttpsError(
+      "not-found",
+      "El episodio clínico no existe."
+    );
+  }
+
+  const episodeData = episodeSnapshot.data();
+
+  if (episodeData?.status !== "open") {
+    throw new HttpsError(
+      "failed-precondition",
+      "El episodio no está abierto."
+    );
+  }
+
+  // 4. Cerrar únicamente el episodio seleccionado.
+  transaction.update(episodeRef, {
+    status: "closed",
+    closedAt: FieldValue.serverTimestamp(),
+    closingReason,
+    closedBy: uid,
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: uid,
+  });
+
+  // 5. Registrar el cierre en la auditoría.
+  const auditRef = episodeRef
+    .collection("events")
+    .doc();
+
+  transaction.create(
+    auditRef,
+    buildClinicalEpisodeAuditEvent("closed", uid, {
+      previousStatus: "open",
+      newStatus: "closed",
+      closingReason,
+    })
+  );
+});
+
+    return {
+      success: true,
+      clientId,
+      episodeId,
+      status: "closed",
+    };
+  }
+);
+/**
+ * Reabre un episodio clínico cerrado.
+ *
+ * Permisos:
+ * - Owner: pacientes de su centro.
+ * - Developer: únicamente pacientes de prueba.
+ */
+export const reopenPatientClinicalEpisode = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      Object.keys(input).some(
+        (key) => !["clientId", "episodeId"].includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos de reapertura no son válidos."
+      );
+    }
+
+    const validateId = (value: unknown): string => {
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.length > 150 ||
+        value.includes("/") ||
+        value.trim() === "." ||
+        value.trim() === ".."
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador no es válido."
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = validateId(input.clientId);
+    const episodeId = validateId(input.episodeId);
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId);
+
+    const episodeRef = clientRef
+      .collection("clinicalEpisodes")
+      .doc(episodeId);
+
+    await db.runTransaction(async (transaction) => {
+  // 1. Consultar usuario, centro y paciente.
+  const userSnapshot = await transaction.get(userRef);
+  const centerSnapshot = await transaction.get(centerRef);
+  const clientSnapshot = await transaction.get(clientRef);
+
+  if (
+    !userSnapshot.exists ||
+    !centerSnapshot.exists ||
+    !clientSnapshot.exists
+  ) {
+    throw new HttpsError(
+      "not-found",
+      "No se ha encontrado el usuario, centro o paciente."
+    );
+  }
+
+  const userData = userSnapshot.data();
+  const centerData = centerSnapshot.data();
+  const clientData = clientSnapshot.data();
+
+  const roles: string[] = Array.isArray(userData?.roles)
+    ? userData.roles
+    : [];
+
+  // 2. Comprobar permisos.
+  const isOwner =
+    roles.includes("owner") &&
+    centerData?.ownerActivated === true &&
+    centerData?.ownerUid === uid;
+
+  const isDeveloper =
+    roles.includes("developer") &&
+    clientData?.isTest === true;
+
+  if (
+    userData?.centerId !== CENTER_ID ||
+    (!isOwner && !isDeveloper)
+  ) {
+    throw new HttpsError(
+      "permission-denied",
+      "No tienes permisos para reabrir este episodio."
+    );
+  }
+
+  if (clientData?.deleted === true) {
+    throw new HttpsError(
+      "failed-precondition",
+      "El paciente está en la papelera."
+    );
+  }
+
+  // 3. Consultar el episodio después de autorizar.
+  const episodeSnapshot = await transaction.get(episodeRef);
+
+  if (!episodeSnapshot.exists) {
+    throw new HttpsError(
+      "not-found",
+      "El episodio clínico no existe."
+    );
+  }
+
+  const episodeData = episodeSnapshot.data();
+
+  if (episodeData?.status !== "closed") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Solo se pueden reabrir episodios cerrados."
+    );
+  }
+
+  // 4. Conservar los datos del cierre anterior
+  // en la auditoría antes de limpiar el cierre vigente.
+  const previousClosingReason =
+    typeof episodeData.closingReason === "string"
+      ? episodeData.closingReason
+      : "";
+
+  const previousClosedBy =
+    typeof episodeData.closedBy === "string"
+      ? episodeData.closedBy
+      : "";
+
+  const previousClosedAt =
+    episodeData.closedAt instanceof Timestamp
+      ? episodeData.closedAt
+      : null;
+
+  // 5. Reabrir el episodio.
+  transaction.update(episodeRef, {
+    status: "open",
+
+    // Ya no existe un cierre vigente.
+    closedAt: null,
+    closingReason: "",
+    closedBy: null,
+
+    reopenedAt: FieldValue.serverTimestamp(),
+    reopenedBy: uid,
+
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: uid,
+  });
+
+  // 6. Registrar la reapertura y conservar
+  // los datos del cierre anterior.
+  const auditRef = episodeRef
+    .collection("events")
+    .doc();
+
+  transaction.create(
+    auditRef,
+    buildClinicalEpisodeAuditEvent("reopened", uid, {
+      previousStatus: "closed",
+      newStatus: "open",
+      previousClosedAt,
+      previousClosedBy,
+      previousClosingReason,
+    })
+  );
+});
+
+    return {
+      success: true,
+      clientId,
+      episodeId,
+      status: "open",
+    };
+  }
+);
+/**
+ * Obtiene un episodio clínico individual.
+ *
+ * Permisos:
+ * - Owner: pacientes de su centro.
+ * - Developer: únicamente pacientes de prueba.
+ *
+ * No permite acceso directo a pacientes.
+ */
+export const getPatientClinicalEpisode = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      Object.keys(input).some(
+        (key) => !["clientId", "episodeId"].includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos de consulta no son válidos."
+      );
+    }
+
+    const validateId = (value: unknown): string => {
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.length > 150 ||
+        value.includes("/") ||
+        value.trim() === "." ||
+        value.trim() === ".."
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador no es válido."
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = validateId(input.clientId);
+    const episodeId = validateId(input.episodeId);
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId);
+
+    const episodeRef = clientRef
+      .collection("clinicalEpisodes")
+      .doc(episodeId);
+
+const [
+  userSnapshot,
+  centerSnapshot,
+  clientSnapshot,
+] = await Promise.all([
+  userRef.get(),
+  centerRef.get(),
+  clientRef.get(),
+]);
+
+    if (
+      !userSnapshot.exists ||
+      !centerSnapshot.exists ||
+      !clientSnapshot.exists
+    ) {
+      throw new HttpsError(
+        "not-found",
+        "No se ha encontrado el usuario, centro o paciente."
+      );
+    }
+
+    const userData = userSnapshot.data();
+    const centerData = centerSnapshot.data();
+    const clientData = clientSnapshot.data();
+
+    const roles: string[] = Array.isArray(userData?.roles)
+      ? userData.roles
+      : [];
+
+    const isOwner =
+      roles.includes("owner") &&
+      centerData?.ownerActivated === true &&
+      centerData?.ownerUid === uid;
+
+    const isDeveloper =
+      roles.includes("developer") &&
+      clientData?.isTest === true;
+
+    if (
+      userData?.centerId !== CENTER_ID ||
+      (!isOwner && !isDeveloper)
+    ) {
+      throw new HttpsError(
+        "permission-denied",
+        "No tienes permisos para consultar este episodio."
+      );
+    }
+
+if (clientData?.deleted === true) {
+  throw new HttpsError(
+    "failed-precondition",
+    "El paciente está en la papelera."
+  );
+}
+
+// Los permisos ya se han comprobado.
+// Ahora podemos consultar los datos clínicos.
+const episodeSnapshot = await episodeRef.get();
+
+if (!episodeSnapshot.exists) {
+  throw new HttpsError(
+    "not-found",
+    "El episodio clínico no existe."
+  );
+}
+
+    const episodeData = episodeSnapshot.data();
+
+    const readString = (value: unknown): string =>
+      typeof value === "string" ? value : "";
+
+    const toISOString = (value: unknown): string | null =>
+      value instanceof Timestamp
+        ? value.toDate().toISOString()
+        : null;
+
+    return {
+      success: true,
+      episode: {
+        episodeId,
+        clientId,
+
+        title: readString(episodeData?.title),
+
+        reasonForConsultation: readString(
+          episodeData?.reasonForConsultation
+        ),
+
+        affectedArea: readString(
+          episodeData?.affectedArea
+        ),
+
+        observations: readString(
+          episodeData?.observations
+        ),
+
+        status:
+          episodeData?.status === "closed"
+            ? "closed"
+            : "open",
+
+        openedAt: toISOString(episodeData?.openedAt),
+        closedAt: toISOString(episodeData?.closedAt),
+
+        closingReason: readString(
+          episodeData?.closingReason
+        ),
+
+        createdAt: toISOString(episodeData?.createdAt),
+        updatedAt: toISOString(episodeData?.updatedAt),
+
+        createdBy: readString(episodeData?.createdBy),
+        updatedBy: readString(episodeData?.updatedBy),
+
+        closedBy: readString(episodeData?.closedBy),
+        reopenedBy: readString(episodeData?.reopenedBy),
+        reopenedAt: toISOString(episodeData?.reopenedAt),
+      },
+    };
+  }
+);
+/**
+ * Actualiza los datos de un episodio clínico abierto.
+ *
+ * Permisos:
+ * - Owner: pacientes de su centro.
+ * - Developer: únicamente pacientes de prueba.
+ *
+ * Los episodios cerrados no se pueden modificar.
+ */
+export const updatePatientClinicalEpisode = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos del episodio no son válidos."
+      );
+    }
+
+    const allowedKeys = [
+      "clientId",
+      "episodeId",
+      "title",
+      "reasonForConsultation",
+      "affectedArea",
+      "observations",
+    ];
+
+    if (
+      Object.keys(input).some(
+        (key) => !allowedKeys.includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const validateId = (value: unknown): string => {
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.length > 150 ||
+        value.includes("/") ||
+        value.trim() === "." ||
+        value.trim() === ".."
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador no es válido."
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = validateId(input.clientId);
+    const episodeId = validateId(input.episodeId);
+
+    const readString = (
+      key: string,
+      maxLength: number,
+      required = false
+    ): string => {
+      const value = input[key];
+
+      if (
+        typeof value !== "string" ||
+        value.length > maxLength
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          `El campo ${key} no es válido.`
+        );
+      }
+
+      const normalized = value.trim();
+
+      if (required && !normalized) {
+        throw new HttpsError(
+          "invalid-argument",
+          `El campo ${key} es obligatorio.`
+        );
+      }
+
+      return normalized;
+    };
+
+    const episodeData = {
+      title: readString("title", 200, true),
+
+      reasonForConsultation: readString(
+        "reasonForConsultation",
+        2000
+      ),
+
+      affectedArea: readString(
+        "affectedArea",
+        1000
+      ),
+
+      observations: readString(
+        "observations",
+        10000
+      ),
+    };
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId);
+
+    const episodeRef = clientRef
+      .collection("clinicalEpisodes")
+      .doc(episodeId);
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+const centerSnapshot = await transaction.get(centerRef);
+const clientSnapshot = await transaction.get(clientRef);
+if (
+  !userSnapshot.exists ||
+  !centerSnapshot.exists ||
+  !clientSnapshot.exists
+) {
+  throw new HttpsError(
+    "not-found",
+    "No se ha encontrado el usuario, centro o paciente."
+  );
+}
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper =
+        roles.includes("developer") &&
+        clientData?.isTest === true;
+
+      if (
+        userData?.centerId !== CENTER_ID ||
+        (!isOwner && !isDeveloper)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para modificar este episodio."
+        );
+      }
+
+      if (clientData?.deleted === true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "El paciente está en la papelera."
+        );
+      }
+
+      // Los permisos ya se han comprobado.
+// Ahora podemos consultar el episodio clínico.
+const episodeSnapshot = await transaction.get(episodeRef);
+
+if (!episodeSnapshot.exists) {
+  throw new HttpsError(
+    "not-found",
+    "El episodio clínico no existe."
+  );
+}
+
+const currentEpisode = episodeSnapshot.data();
+
+      if (currentEpisode?.status !== "open") {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se puede modificar un episodio cerrado."
+        );
+      }
+      // Identificar únicamente los campos modificados.
+const changedFields = Object.keys(episodeData).filter(
+  (key) => {
+    const field = key as keyof typeof episodeData;
+
+    return (
+      episodeData[field] !==
+      currentEpisode?.[field]
+    );
+  }
+);
+
+// Si no existen cambios, evitamos escrituras innecesarias.
+if (changedFields.length === 0) {
+  return;
+}
+      // Actualizar únicamente el episodio seleccionado.
+transaction.update(episodeRef, {
+  ...episodeData,
+  updatedAt: FieldValue.serverTimestamp(),
+  updatedBy: uid,
+});
+
+// Registrar el cambio en la auditoría clínica.
+const auditRef = episodeRef
+  .collection("events")
+  .doc();
+
+transaction.create(
+  auditRef,
+  buildClinicalEpisodeAuditEvent("updated", uid, {
+    changedFields,
+  })
+);
+    });
+
+    return {
+      success: true,
+      clientId,
+      episodeId,
+    };
+  }
+);
+/**
+ * Construye un evento de auditoría clínica.
+ *
+ * No escribe directamente en Firestore.
+ * El evento se guardará dentro de la misma
+ * transacción que modifica el episodio.
+ */
+const buildClinicalEpisodeAuditEvent = (
+  type: "created" | "updated" | "closed" | "reopened",
+  performedBy: string,
+  details: Record<string, unknown> = {}
+) => {
+  return {
+    type,
+    performedBy,
+    createdAt: FieldValue.serverTimestamp(),
+    ...details,
+  };
+};
+/**
+ * Registra una sesión de evolución clínica.
+ *
+ * Owner: pacientes del centro.
+ * Developer: únicamente pacientes de prueba.
+ *
+ * Solo permite añadir sesiones a episodios abiertos.
+ */
+export const createPatientClinicalSession = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos de la sesión no son válidos."
+      );
+    }
+
+    const allowedKeys = [
+      "clientId",
+      "episodeId",
+      "sessionDate",
+      "painLevel",
+      "symptoms",
+      "treatment",
+      "exercises",
+      "evolution",
+    ];
+
+    if (
+      Object.keys(input).some(
+        (key) => !allowedKeys.includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const validateId = (value: unknown): string => {
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.length > 150 ||
+        value.includes("/") ||
+        value.trim() === "." ||
+        value.trim() === ".."
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador no es válido."
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = validateId(input.clientId);
+    const episodeId = validateId(input.episodeId);
+
+    const readString = (
+      key: string,
+      maxLength: number
+    ): string => {
+      const value = input[key];
+
+      if (
+        typeof value !== "string" ||
+        value.length > maxLength
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          `El campo ${key} no es válido.`
+        );
+      }
+
+      return value.trim();
+    };
+
+    const sessionDate = readString("sessionDate", 10);
+
+    // Fecha estricta YYYY-MM-DD, sin conversiones de zona horaria.
+    const dateMatch =
+      /^(\d{4})-(\d{2})-(\d{2})$/.exec(sessionDate);
+
+    if (!dateMatch) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La fecha debe tener el formato YYYY-MM-DD."
+      );
+    }
+
+    const year = Number(dateMatch[1]);
+    const month = Number(dateMatch[2]);
+    const day = Number(dateMatch[3]);
+
+    const parsedDate = new Date(0);
+    parsedDate.setUTCFullYear(year, month - 1, day);
+    parsedDate.setUTCHours(0, 0, 0, 0);
+
+    if (
+      parsedDate.getUTCFullYear() !== year ||
+      parsedDate.getUTCMonth() !== month - 1 ||
+      parsedDate.getUTCDate() !== day
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La fecha de la sesión no es válida."
+      );
+    }
+
+    const painLevel = input.painLevel;
+
+    if (
+      typeof painLevel !== "number" ||
+      !Number.isInteger(painLevel) ||
+      painLevel < 0 ||
+      painLevel > 10
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "El nivel de dolor debe estar entre 0 y 10."
+      );
+    }
+
+    const sessionData = {
+      sessionDate,
+      painLevel,
+      symptoms: readString("symptoms", 5000),
+      treatment: readString("treatment", 5000),
+      exercises: readString("exercises", 5000),
+      evolution: readString("evolution", 5000),
+    };
+
+    // Validación previa de identidad y permisos.
+    await assertClinicalPatientAccess(uid, clientId);
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const clientRef = centerRef
+      .collection("clients")
+      .doc(clientId);
+
+    const episodeRef = clientRef
+      .collection("clinicalEpisodes")
+      .doc(episodeId);
+
+    const sessionRef = episodeRef
+      .collection("sessions")
+      .doc();
+
+    const auditRef = sessionRef
+      .collection("events")
+      .doc();
+      const episodeAuditRef = episodeRef
+  .collection("events")
+  .doc();
+
+    await db.runTransaction(async (transaction) => {
+      // Todas las lecturas antes de las escrituras.
+      const userSnapshot = await transaction.get(userRef);
+      const centerSnapshot = await transaction.get(centerRef);
+      const clientSnapshot = await transaction.get(clientRef);
+
+      if (
+        !userSnapshot.exists ||
+        !centerSnapshot.exists ||
+        !clientSnapshot.exists
+      ) {
+        throw new HttpsError(
+          "not-found",
+          "No se ha encontrado el usuario, centro o paciente."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper =
+        roles.includes("developer") &&
+        clientData?.isTest === true;
+
+      if (
+        userData?.centerId !== CENTER_ID ||
+        (!isOwner && !isDeveloper)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para registrar esta sesión."
+        );
+      }
+
+      if (clientData?.deleted === true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "El paciente está en la papelera."
+        );
+      }
+
+      const episodeSnapshot =
+        await transaction.get(episodeRef);
+
+      if (!episodeSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "El episodio clínico no existe."
+        );
+      }
+
+      if (episodeSnapshot.data()?.status !== "open") {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se pueden registrar sesiones en un episodio cerrado."
+        );
+      }
+
+      // El profesional se determina en el servidor.
+      // Nunca se acepta un professionalId enviado por el cliente.
+      transaction.create(sessionRef, {
+        ...sessionData,
+        professionalId: uid,
+        createdBy: uid,
+        updatedBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      // Auditoría propia de la sesión.
+transaction.create(auditRef, {
+  type: "created",
+  performedBy: uid,
+  createdAt: FieldValue.serverTimestamp(),
+});
+
+// Auditoría general del episodio clínico.
+transaction.create(episodeAuditRef, {
+  type: "session_created",
+  sessionId: sessionRef.id,
+  sessionDate,
+  performedBy: uid,
+  createdAt: FieldValue.serverTimestamp(),
+});
+    });
+
+    return {
+      success: true,
+      clientId,
+      episodeId,
+      sessionId: sessionRef.id,
+    };
+  }
+);
+/**
+ * Obtiene las sesiones de evolución clínica
+ * de un episodio concreto.
+ *
+ * Permisos:
+ * - Owner: pacientes de su centro.
+ * - Developer: únicamente pacientes de prueba.
+ *
+ * Los pacientes no pueden consultar estas sesiones.
+ */
+export const getPatientClinicalSessions = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // 1. Comprobar autenticación.
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+    const input = request.data;
+
+    // 2. Validar parámetros.
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      Object.keys(input).some(
+        (key) => !["clientId", "episodeId"].includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos de consulta no son válidos."
+      );
+    }
+
+    const validateId = (value: unknown): string => {
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.length > 150 ||
+        value.includes("/") ||
+        value.trim() === "." ||
+        value.trim() === ".."
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador no es válido."
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = validateId(input.clientId);
+    const episodeId = validateId(input.episodeId);
+
+    // 3. Comprobar identidad y permisos
+    // antes de consultar información clínica.
+    await assertClinicalPatientAccess(uid, clientId);
+
+    const episodeRef = db
+      .collection("centers")
+      .doc(CENTER_ID)
+      .collection("clients")
+      .doc(clientId)
+      .collection("clinicalEpisodes")
+      .doc(episodeId);
+
+    // 4. Comprobar que el episodio existe.
+    const episodeSnapshot = await episodeRef.get();
+
+    if (!episodeSnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "El episodio clínico no existe."
+      );
+    }
+
+    // 5. Consultar las sesiones.
+    const sessionsSnapshot = await episodeRef
+      .collection("sessions")
+      .orderBy("sessionDate", "desc")
+      .limit(100)
+      .get();
+
+    // 6. Convertir fechas de Firestore.
+    const toISOString = (
+      value: unknown
+    ): string | null =>
+      value instanceof Timestamp
+        ? value.toDate().toISOString()
+        : null;
+
+    const readString = (value: unknown): string =>
+      typeof value === "string" ? value : "";
+
+    // 7. Preparar la respuesta.
+    const sessions = sessionsSnapshot.docs.map(
+      (document) => {
+        const data = document.data();
+
+        return {
+          sessionId: document.id,
+          episodeId,
+          clientId,
+
+          sessionDate: readString(data.sessionDate),
+
+          painLevel:
+            typeof data.painLevel === "number"
+              ? data.painLevel
+              : null,
+
+          symptoms: readString(data.symptoms),
+
+          treatment: readString(data.treatment),
+
+          exercises: readString(data.exercises),
+
+          evolution: readString(data.evolution),
+
+          professionalId: readString(
+            data.professionalId
+          ),
+
+          createdBy: readString(data.createdBy),
+
+          updatedBy: readString(data.updatedBy),
+
+          createdAt: toISOString(data.createdAt),
+
+          updatedAt: toISOString(data.updatedAt),
+        };
+      }
+    );
+
+    // 8. Devolver las sesiones.
+    return {
+      success: true,
+      clientId,
+      episodeId,
+      sessions,
     };
   }
 );
