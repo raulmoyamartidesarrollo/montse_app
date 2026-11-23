@@ -6,6 +6,7 @@ import React, {
 
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,8 +17,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import {
-  ClinicalSession,
+  type ClinicalSession,
   getPatientClinicalSessions,
+  deletePatientClinicalSession,
 } from '../../services/clinicalSessions';
 
 interface Props {
@@ -25,6 +27,7 @@ interface Props {
   episodeId: string;
   episodeStatus: 'open' | 'closed';
   onCreateSession: () => void;
+  onEditSession: (session: ClinicalSession) => void;
 }
 
 export default function ClinicalSessionsList({
@@ -32,6 +35,7 @@ export default function ClinicalSessionsList({
   episodeId,
   episodeStatus,
   onCreateSession,
+  onEditSession,
 }: Props) {
   const [sessions, setSessions] = useState<
     ClinicalSession[]
@@ -39,6 +43,7 @@ export default function ClinicalSessionsList({
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -68,6 +73,45 @@ export default function ClinicalSessionsList({
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  const handleDeleteSession = (session: ClinicalSession) => {
+    if (episodeStatus !== 'open' || deletingSessionId) {
+      return;
+    }
+
+    Alert.alert(
+      'Eliminar sesión clínica',
+      '¿Seguro que deseas eliminar esta sesión? Se conservará un registro de auditoría.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setDeletingSessionId(session.sessionId);
+
+              await deletePatientClinicalSession({
+                clientId,
+                episodeId,
+                sessionId: session.sessionId,
+              });
+
+              await loadSessions();
+            } catch (error) {
+              console.error('Error eliminando sesión:', error);
+              Alert.alert(
+                'Error',
+                'No se ha podido eliminar la sesión clínica.'
+              );
+            } finally {
+              setDeletingSessionId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const formatDate = (date: string): string => {
     const [year, month, day] = date.split('-');
@@ -229,6 +273,44 @@ export default function ClinicalSessionsList({
               'Evolución',
               session.evolution
             )}
+
+            {episodeStatus === 'open' && (
+              <View style={styles.sessionActions}>
+                <Pressable
+                  style={styles.editButton}
+                  onPress={() => onEditSession(session)}
+                  disabled={Boolean(deletingSessionId)}
+                >
+                  <Ionicons
+                    name="create-outline"
+                    size={17}
+                    color="#2563EB"
+                  />
+                  <Text style={styles.editButtonText}>
+                    Editar
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  style={styles.deleteButton}
+                  onPress={() => handleDeleteSession(session)}
+                  disabled={Boolean(deletingSessionId)}
+                >
+                  {deletingSessionId === session.sessionId ? (
+                    <ActivityIndicator size="small" color="#DC2626" />
+                  ) : (
+                    <Ionicons
+                      name="trash-outline"
+                      size={17}
+                      color="#DC2626"
+                    />
+                  )}
+                  <Text style={styles.deleteButtonText}>
+                    Eliminar
+                  </Text>
+                </Pressable>
+              </View>
+            )}
           </View>
         ))
       )}
@@ -385,5 +467,47 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#334155',
     lineHeight: 21,
+  },
+
+  sessionActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+  },
+
+  editButton: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 7,
+    paddingVertical: 11,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2563EB',
+  },
+
+  editButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2563EB',
+  },
+
+  deleteButton: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 7,
+    paddingVertical: 11,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#DC2626',
+  },
+
+  deleteButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#DC2626',
   },
 });

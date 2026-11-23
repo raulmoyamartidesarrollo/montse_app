@@ -131,3 +131,80 @@ export async function getPatientClinicalSessions(
 
   return response.data.sessions;
 }
+/**
+ * Datos necesarios para modificar una sesión clínica.
+ * La sesión debe pertenecer a un episodio abierto.
+ */
+export interface UpdateClinicalSessionInput
+  extends CreateClinicalSessionInput {
+  sessionId: string;
+}
+
+/**
+ * Identifica la sesión que se desea eliminar.
+ */
+export interface DeleteClinicalSessionInput {
+  clientId: string;
+  episodeId: string;
+  sessionId: string;
+}
+
+/**
+ * Respuesta de las operaciones de modificación y eliminación.
+ */
+export interface ClinicalSessionMutationResponse {
+  success: boolean;
+  clientId: string;
+  episodeId: string;
+  sessionId: string;
+}
+
+/**
+ * Modifica una sesión clínica existente.
+ *
+ * La validación de permisos, estado del episodio
+ * y auditoría se realiza en Cloud Functions.
+ */
+export async function updatePatientClinicalSession(
+  input: UpdateClinicalSessionInput
+): Promise<ClinicalSessionMutationResponse> {
+  const callable = httpsCallable<
+    UpdateClinicalSessionInput,
+    ClinicalSessionMutationResponse
+  >(functions, 'updatePatientClinicalSession');
+
+  const response = await callable(input);
+
+  if (!response.data.success) {
+    throw new Error(
+      'No se ha podido actualizar la sesión clínica.'
+    );
+  }
+
+  return response.data;
+}
+
+/**
+ * Elimina lógicamente una sesión clínica.
+ *
+ * El documento permanece en Firestore para conservar
+ * el historial y los registros de auditoría.
+ */
+export async function deletePatientClinicalSession(
+  input: DeleteClinicalSessionInput
+): Promise<ClinicalSessionMutationResponse> {
+  const callable = httpsCallable<
+    DeleteClinicalSessionInput,
+    ClinicalSessionMutationResponse
+  >(functions, 'deletePatientClinicalSession');
+
+  const response = await callable(input);
+
+  if (!response.data.success) {
+    throw new Error(
+      'No se ha podido eliminar la sesión clínica.'
+    );
+  }
+
+  return response.data;
+}

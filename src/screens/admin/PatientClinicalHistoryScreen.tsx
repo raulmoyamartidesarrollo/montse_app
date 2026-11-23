@@ -33,6 +33,7 @@ import {
 } from '../../services/clinicalHistory';
 
 import ClinicalEpisodesList from '../../components/clinical/ClinicalEpisodesList';
+import PatientClinicalEvolution from '../../components/clinical/PatientClinicalEvolution';
 import type { ClinicalEpisode } from '../../services/clinicalEpisodes';
 import CreateClinicalEpisodeForm from '../../components/clinical/CreateClinicalEpisodeForm';
 import ClinicalEpisodeDetail from '../../components/clinical/ClinicalEpisodeDetail';
@@ -556,26 +557,10 @@ const handleReopenEpisode = (episode: ClinicalEpisode) => {
 )}
 
         {activeTab === 'evolution' && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <Ionicons
-                name="pulse-outline"
-                size={22}
-                color={colors.primary}
-              />
-
-              <Text style={styles.sectionTitle}>
-                Evolución y sesiones
-              </Text>
-            </View>
-
-            <Text style={styles.sectionDescription}>
-              Aquí mostraremos la evolución del paciente,
-              la escala de dolor EVA y el historial
-              cronológico de tratamientos realizados.
-            </Text>
-          </View>
-        )}
+  <View style={styles.sectionCard}>
+    <PatientClinicalEvolution clientId={clientId} />
+  </View>
+)}
 
         {activeTab === 'painMap' && (
           <View style={styles.sectionCard}>

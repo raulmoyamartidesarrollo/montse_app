@@ -17,6 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 
 import {
   createPatientClinicalSession,
+  updatePatientClinicalSession,
+  type ClinicalSession,
 } from '../../services/clinicalSessions';
 
 interface Props {
@@ -24,6 +26,7 @@ interface Props {
   episodeId: string;
   onSaved: () => void;
   onCancel: () => void;
+  session?: ClinicalSession;
 }
 
 const MAX_TEXT_LENGTH = 5000;
@@ -65,16 +68,21 @@ export default function CreateClinicalSessionForm({
   episodeId,
   onSaved,
   onCancel,
+  session,
 }: Props) {
+  const isEditing = Boolean(session);
+
   const [sessionDate, setSessionDate] = useState(
-    getTodayLocal()
+    session?.sessionDate ?? getTodayLocal()
   );
 
-  const [painLevel, setPainLevel] = useState(0);
-  const [symptoms, setSymptoms] = useState('');
-  const [treatment, setTreatment] = useState('');
-  const [exercises, setExercises] = useState('');
-  const [evolution, setEvolution] = useState('');
+  const [painLevel, setPainLevel] = useState(
+    session?.painLevel ?? 0
+  );
+  const [symptoms, setSymptoms] = useState(session?.symptoms ?? '');
+  const [treatment, setTreatment] = useState(session?.treatment ?? '');
+  const [exercises, setExercises] = useState(session?.exercises ?? '');
+  const [evolution, setEvolution] = useState(session?.evolution ?? '');
 
   const [saving, setSaving] = useState(false);
 
@@ -107,7 +115,7 @@ export default function CreateClinicalSessionForm({
     try {
       setSaving(true);
 
-      await createPatientClinicalSession({
+      const input = {
         clientId,
         episodeId,
         sessionDate: sessionDate.trim(),
@@ -116,11 +124,22 @@ export default function CreateClinicalSessionForm({
         treatment: treatment.trim(),
         exercises: exercises.trim(),
         evolution: evolution.trim(),
-      });
+      };
+
+      if (session) {
+        await updatePatientClinicalSession({
+          ...input,
+          sessionId: session.sessionId,
+        });
+      } else {
+        await createPatientClinicalSession(input);
+      }
 
       Alert.alert(
-        'Sesión registrada',
-        'La sesión clínica se ha guardado correctamente.',
+        isEditing ? 'Sesión actualizada' : 'Sesión registrada',
+        isEditing
+          ? 'Los cambios se han guardado correctamente.'
+          : 'La sesión clínica se ha guardado correctamente.',
         [
           {
             text: 'Aceptar',
@@ -190,11 +209,13 @@ export default function CreateClinicalSessionForm({
 
           <View style={styles.headerText}>
             <Text style={styles.title}>
-              Nueva sesión clínica
+              {isEditing ? 'Editar sesión clínica' : 'Nueva sesión clínica'}
             </Text>
 
             <Text style={styles.subtitle}>
-              Registra el tratamiento y la evolución del paciente.
+              {isEditing
+                ? 'Modifica el tratamiento y la evolución registrados.'
+                : 'Registra el tratamiento y la evolución del paciente.'}
             </Text>
           </View>
         </View>
@@ -313,7 +334,7 @@ export default function CreateClinicalSessionForm({
                 />
 
                 <Text style={styles.saveButtonText}>
-                  Guardar sesión
+                  {isEditing ? 'Guardar cambios' : 'Guardar sesión'}
                 </Text>
               </>
             )}

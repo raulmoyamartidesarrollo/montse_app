@@ -17,6 +17,8 @@ import {
   type ClinicalEpisode,
 } from '../../services/clinicalEpisodes';
 
+import type { ClinicalSession } from '../../services/clinicalSessions';
+
 import ClinicalSessionsList from './ClinicalSessionsList';
 import CreateClinicalSessionForm from './CreateClinicalSessionForm';
 
@@ -87,6 +89,9 @@ export default function ClinicalEpisodeDetail({
   const [showCreateSession, setShowCreateSession] =
     useState(false);
 
+  const [editingSession, setEditingSession] =
+    useState<ClinicalSession | null>(null);
+
   // Permite volver a montar el listado tras guardar.
   const [sessionsRefreshKey, setSessionsRefreshKey] =
     useState(0);
@@ -127,6 +132,7 @@ export default function ClinicalEpisodeDetail({
   // Volver al listado después de guardar.
   const handleSessionSaved = () => {
     setShowCreateSession(false);
+    setEditingSession(null);
     setActiveTab('evolution');
 
     // Fuerza una nueva consulta de sesiones.
@@ -136,6 +142,15 @@ export default function ClinicalEpisodeDetail({
   // Cancelar el formulario.
   const handleCancelSession = () => {
     setShowCreateSession(false);
+    setEditingSession(null);
+  };
+
+  const handleEditSession = (session: ClinicalSession) => {
+    if (episode?.status !== 'open') {
+      return;
+    }
+
+    setEditingSession(session);
   };
 
   const renderField = (label: string, value: string) => (
@@ -188,11 +203,13 @@ export default function ClinicalEpisodeDetail({
   const isOpen = episode.status === 'open';
 
   // Pantalla de registro de una nueva sesión.
-  if (showCreateSession && isOpen) {
+  if ((showCreateSession || editingSession) && isOpen) {
     return (
       <CreateClinicalSessionForm
+        key={editingSession?.sessionId ?? 'new-session'}
         clientId={clientId}
         episodeId={episodeId}
+        session={editingSession ?? undefined}
         onSaved={handleSessionSaved}
         onCancel={handleCancelSession}
       />
@@ -330,6 +347,7 @@ export default function ClinicalEpisodeDetail({
             episodeId={episodeId}
             episodeStatus={episode.status}
             onCreateSession={handleCreateSession}
+            onEditSession={handleEditSession}
           />
         </View>
       )}

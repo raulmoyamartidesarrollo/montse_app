@@ -4627,12 +4627,45 @@ export const getPatientClinicalSessions = onCall(
       );
     }
 
-    // 5. Consultar las sesiones.
-    const sessionsSnapshot = await episodeRef
-      .collection("sessions")
-      .orderBy("sessionDate", "desc")
-      .limit(100)
-      .get();
+    // 5. Consultar sesiones activas por bloques.
+    // Las sesiones antiguas sin campo deleted siguen siendo visibles.
+    const activeSessionDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    const batchSize = 100;
+
+    let lastDocument: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+
+    while (activeSessionDocs.length < 100) {
+      let query = episodeRef
+        .collection("sessions")
+        .orderBy("sessionDate", "desc")
+        .limit(batchSize);
+
+      if (lastDocument) {
+        query = query.startAfter(lastDocument);
+      }
+
+      const snapshot = await query.get();
+
+      if (snapshot.empty) {
+        break;
+      }
+
+      for (const document of snapshot.docs) {
+        if (document.data().deleted !== true) {
+          activeSessionDocs.push(document);
+        }
+
+        if (activeSessionDocs.length === 100) {
+          break;
+        }
+      }
+
+      lastDocument = snapshot.docs[snapshot.docs.length - 1];
+
+      if (snapshot.size < batchSize) {
+        break;
+      }
+    }
 
     // 6. Convertir fechas de Firestore.
     const toISOString = (
@@ -4646,8 +4679,8 @@ export const getPatientClinicalSessions = onCall(
       typeof value === "string" ? value : "";
 
     // 7. Preparar la respuesta.
-    const sessions = sessionsSnapshot.docs.map(
-      (document) => {
+    const sessions = activeSessionDocs
+      .map((document) => {
         const data = document.data();
 
         return {
@@ -4693,4 +4726,675 @@ export const getPatientClinicalSessions = onCall(
       sessions,
     };
   }
+);
+/**
+
+ * Modifica una sesión clínica existente.
+
+ * Conserva los datos originales en la auditoría.
+
+ */
+
+export const updatePatientClinicalSession = onCall(
+
+  {
+
+    region: "europe-west1",
+
+    enforceAppCheck: false,
+
+  },
+
+  async (request) => {
+
+    if (!request.auth) {
+
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+
+    }
+
+    const uid = request.auth.uid;
+
+    const input = request.data;
+
+    if (
+
+      !input ||
+
+      typeof input !== "object" ||
+
+      Array.isArray(input)
+
+    ) {
+
+      throw new HttpsError("invalid-argument", "Datos no válidos.");
+
+    }
+
+    const allowedKeys = [
+
+      "clientId",
+
+      "episodeId",
+
+      "sessionId",
+
+      "sessionDate",
+
+      "painLevel",
+
+      "symptoms",
+
+      "treatment",
+
+      "exercises",
+
+      "evolution",
+
+    ];
+
+    if (Object.keys(input).some((key) => !allowedKeys.includes(key))) {
+
+      throw new HttpsError(
+
+        "invalid-argument",
+
+        "Se han enviado campos no permitidos."
+
+      );
+
+    }
+
+    const validateId = (value: unknown): string => {
+
+      if (
+
+        typeof value !== "string" ||
+
+        !value.trim() ||
+
+        value.length > 150 ||
+
+        value.includes("/") ||
+
+        value.trim() === "." ||
+
+        value.trim() === ".."
+
+      ) {
+
+        throw new HttpsError("invalid-argument", "Identificador no válido.");
+
+      }
+
+      return value.trim();
+
+    };
+
+    const clientId = validateId(input.clientId);
+
+    const episodeId = validateId(input.episodeId);
+
+    const sessionId = validateId(input.sessionId);
+
+    const readString = (key: string): string => {
+
+      const value = input[key];
+
+      if (typeof value !== "string" || value.length > 5000) {
+
+        throw new HttpsError(
+
+          "invalid-argument",
+
+          `El campo ${key} no es válido.`
+
+        );
+
+      }
+
+      return value.trim();
+
+    };
+
+    const sessionDate = readString("sessionDate");
+
+    const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(sessionDate);
+
+    if (!dateMatch) {
+
+      throw new HttpsError(
+
+        "invalid-argument",
+
+        "La fecha debe tener el formato YYYY-MM-DD."
+
+      );
+
+    }
+
+    const year = Number(dateMatch[1]);
+
+    const month = Number(dateMatch[2]);
+
+    const day = Number(dateMatch[3]);
+
+    const parsedDate = new Date(0);
+
+    parsedDate.setUTCFullYear(year, month - 1, day);
+
+    parsedDate.setUTCHours(0, 0, 0, 0);
+
+    if (
+
+      parsedDate.getUTCFullYear() !== year ||
+
+      parsedDate.getUTCMonth() !== month - 1 ||
+
+      parsedDate.getUTCDate() !== day
+
+    ) {
+
+      throw new HttpsError("invalid-argument", "Fecha no válida.");
+
+    }
+
+    const painLevel = input.painLevel;
+
+    if (
+
+      typeof painLevel !== "number" ||
+
+      !Number.isInteger(painLevel) ||
+
+      painLevel < 0 ||
+
+      painLevel > 10
+
+    ) {
+
+      throw new HttpsError(
+
+        "invalid-argument",
+
+        "El nivel de dolor debe estar entre 0 y 10."
+
+      );
+
+    }
+
+    const newData = {
+
+      sessionDate,
+
+      painLevel,
+
+      symptoms: readString("symptoms"),
+
+      treatment: readString("treatment"),
+
+      exercises: readString("exercises"),
+
+      evolution: readString("evolution"),
+
+    };
+
+    await assertClinicalPatientAccess(uid, clientId);
+
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const clientRef = centerRef.collection("clients").doc(clientId);
+
+    const episodeRef = clientRef.collection("clinicalEpisodes").doc(episodeId);
+
+    const sessionRef = episodeRef.collection("sessions").doc(sessionId);
+
+    const auditRef = sessionRef.collection("events").doc();
+
+    const episodeAuditRef = episodeRef.collection("events").doc();
+
+    const userRef = db.collection("users").doc(uid);
+
+    await db.runTransaction(async (transaction) => {
+
+      const [userSnapshot, centerSnapshot, clientSnapshot, episodeSnapshot, sessionSnapshot] =
+
+        await Promise.all([
+
+          transaction.get(userRef),
+
+          transaction.get(centerRef),
+
+          transaction.get(clientRef),
+
+          transaction.get(episodeRef),
+
+          transaction.get(sessionRef),
+
+        ]);
+
+      if (
+
+        !userSnapshot.exists ||
+
+        !centerSnapshot.exists ||
+
+        !clientSnapshot.exists ||
+
+        !episodeSnapshot.exists ||
+
+        !sessionSnapshot.exists
+
+      ) {
+
+        throw new HttpsError("not-found", "No se encontró la sesión clínica.");
+
+      }
+
+      const userData = userSnapshot.data();
+
+      const centerData = centerSnapshot.data();
+
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+
+        ? userData.roles
+
+        : [];
+
+      const isOwner =
+
+        roles.includes("owner") &&
+
+        centerData?.ownerActivated === true &&
+
+        centerData?.ownerUid === uid;
+
+      const isDeveloper =
+
+        roles.includes("developer") &&
+
+        clientData?.isTest === true;
+
+      if (
+
+        userData?.centerId !== CENTER_ID ||
+
+        (!isOwner && !isDeveloper)
+
+      ) {
+
+        throw new HttpsError("permission-denied", "No tienes permisos.");
+
+      }
+
+      if (clientData?.deleted === true) {
+
+        throw new HttpsError(
+
+          "failed-precondition",
+
+          "El paciente está en la papelera."
+
+        );
+
+      }
+
+      if (episodeSnapshot.data()?.status !== "open") {
+
+        throw new HttpsError(
+
+          "failed-precondition",
+
+          "No puedes editar sesiones de un episodio cerrado."
+
+        );
+
+      }
+
+      const previousData = sessionSnapshot.data();
+
+      if (previousData?.deleted === true) {
+
+        throw new HttpsError(
+
+          "failed-precondition",
+
+          "La sesión está eliminada."
+
+        );
+
+      }
+
+      const previousValues = {
+
+        sessionDate: previousData?.sessionDate ?? "",
+
+        painLevel: previousData?.painLevel ?? null,
+
+        symptoms: previousData?.symptoms ?? "",
+
+        treatment: previousData?.treatment ?? "",
+
+        exercises: previousData?.exercises ?? "",
+
+        evolution: previousData?.evolution ?? "",
+
+      };
+
+      transaction.update(sessionRef, {
+
+        ...newData,
+
+        updatedBy: uid,
+
+        updatedAt: FieldValue.serverTimestamp(),
+
+      });
+
+      transaction.create(auditRef, {
+
+        type: "updated",
+
+        performedBy: uid,
+
+        previousValues,
+
+        newValues: newData,
+
+        createdAt: FieldValue.serverTimestamp(),
+
+      });
+
+      transaction.create(episodeAuditRef, {
+
+        type: "session_updated",
+
+        sessionId,
+
+        performedBy: uid,
+
+        createdAt: FieldValue.serverTimestamp(),
+
+      });
+
+    });
+
+    return {
+
+      success: true,
+
+      clientId,
+
+      episodeId,
+
+      sessionId,
+
+    };
+
+  }
+
+);
+
+/**
+
+ * Elimina lógicamente una sesión clínica.
+
+ * Los datos permanecen en Firestore para auditoría.
+
+ */
+
+export const deletePatientClinicalSession = onCall(
+
+  {
+
+    region: "europe-west1",
+
+    enforceAppCheck: false,
+
+  },
+
+  async (request) => {
+
+    if (!request.auth) {
+
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+
+    }
+
+    const uid = request.auth.uid;
+
+    const input = request.data;
+
+    if (
+
+      !input ||
+
+      typeof input !== "object" ||
+
+      Array.isArray(input) ||
+
+      Object.keys(input).some(
+
+        (key) => !["clientId", "episodeId", "sessionId"].includes(key)
+
+      )
+
+    ) {
+
+      throw new HttpsError("invalid-argument", "Datos no válidos.");
+
+    }
+
+    const validateId = (value: unknown): string => {
+
+      if (
+
+        typeof value !== "string" ||
+
+        !value.trim() ||
+
+        value.length > 150 ||
+
+        value.includes("/") ||
+
+        value.trim() === "." ||
+
+        value.trim() === ".."
+
+      ) {
+
+        throw new HttpsError("invalid-argument", "Identificador no válido.");
+
+      }
+
+      return value.trim();
+
+    };
+
+    const clientId = validateId(input.clientId);
+
+    const episodeId = validateId(input.episodeId);
+
+    const sessionId = validateId(input.sessionId);
+
+    await assertClinicalPatientAccess(uid, clientId);
+
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+
+    const clientRef = centerRef.collection("clients").doc(clientId);
+
+    const episodeRef = clientRef.collection("clinicalEpisodes").doc(episodeId);
+
+    const sessionRef = episodeRef.collection("sessions").doc(sessionId);
+
+    const auditRef = sessionRef.collection("events").doc();
+
+    const episodeAuditRef = episodeRef.collection("events").doc();
+
+    const userRef = db.collection("users").doc(uid);
+
+    await db.runTransaction(async (transaction) => {
+
+      const [userSnapshot, centerSnapshot, clientSnapshot, episodeSnapshot, sessionSnapshot] =
+
+        await Promise.all([
+
+          transaction.get(userRef),
+
+          transaction.get(centerRef),
+
+          transaction.get(clientRef),
+
+          transaction.get(episodeRef),
+
+          transaction.get(sessionRef),
+
+        ]);
+
+      if (
+
+        !userSnapshot.exists ||
+
+        !centerSnapshot.exists ||
+
+        !clientSnapshot.exists ||
+
+        !episodeSnapshot.exists ||
+
+        !sessionSnapshot.exists
+
+      ) {
+
+        throw new HttpsError("not-found", "No se encontró la sesión clínica.");
+
+      }
+
+      const userData = userSnapshot.data();
+
+      const centerData = centerSnapshot.data();
+
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+
+        ? userData.roles
+
+        : [];
+
+      const isOwner =
+
+        roles.includes("owner") &&
+
+        centerData?.ownerActivated === true &&
+
+        centerData?.ownerUid === uid;
+
+      const isDeveloper =
+
+        roles.includes("developer") &&
+
+        clientData?.isTest === true;
+
+      if (
+
+        userData?.centerId !== CENTER_ID ||
+
+        (!isOwner && !isDeveloper)
+
+      ) {
+
+        throw new HttpsError("permission-denied", "No tienes permisos.");
+
+      }
+
+      if (clientData?.deleted === true) {
+
+        throw new HttpsError(
+
+          "failed-precondition",
+
+          "El paciente está en la papelera."
+
+        );
+
+      }
+
+      if (episodeSnapshot.data()?.status !== "open") {
+
+        throw new HttpsError(
+
+          "failed-precondition",
+
+          "No puedes eliminar sesiones de un episodio cerrado."
+
+        );
+
+      }
+
+      if (sessionSnapshot.data()?.deleted === true) {
+
+        throw new HttpsError(
+
+          "failed-precondition",
+
+          "La sesión ya está eliminada."
+
+        );
+
+      }
+
+      transaction.update(sessionRef, {
+
+        deleted: true,
+
+        deletedBy: uid,
+
+        deletedAt: FieldValue.serverTimestamp(),
+
+        updatedBy: uid,
+
+        updatedAt: FieldValue.serverTimestamp(),
+
+      });
+
+      transaction.create(auditRef, {
+
+        type: "deleted",
+
+        performedBy: uid,
+
+        createdAt: FieldValue.serverTimestamp(),
+
+      });
+
+      transaction.create(episodeAuditRef, {
+
+        type: "session_deleted",
+
+        sessionId,
+
+        performedBy: uid,
+
+        createdAt: FieldValue.serverTimestamp(),
+
+      });
+
+    });
+
+    return {
+
+      success: true,
+
+      clientId,
+
+      episodeId,
+
+      sessionId,
+
+    };
+
+  }
+
 );

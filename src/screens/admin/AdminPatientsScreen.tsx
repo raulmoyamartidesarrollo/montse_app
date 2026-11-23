@@ -1,4 +1,9 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   ActivityIndicator,
@@ -13,6 +18,7 @@ import {
   Text,
   TextInput,
   View,
+  Platform,
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
@@ -169,7 +175,6 @@ export default function AdminPatientsScreen() {
     useNavigation<
       NativeStackNavigationProp<AdminPatientsStackParamList>
     >();
-
   const [clients, setClients] = useState<CenterClient[]>([]);
 
   const [patientView, setPatientView] =
@@ -199,15 +204,38 @@ const [generatedCodeExpiresAt, setGeneratedCodeExpiresAt] =
     const [editingClient, setEditingClient] =
   useState<CenterClient | null>(null);
 
-const [pendingEdit, setPendingEdit] = useState(false);
+type PendingPatientAction =
+  | { type: 'edit' }
+  | {
+      type: 'clinicalHistory';
+      clientId: string;
+      patientName: string;
+    };
 
-const [
-  pendingClinicalHistory,
-  setPendingClinicalHistory,
-] = useState<{
-  clientId: string;
-  patientName: string;
-} | null>(null);
+const pendingPatientActionRef =
+  useRef<PendingPatientAction | null>(null);
+
+const finishPatientModalAction = () => {
+  const action = pendingPatientActionRef.current;
+
+  if (!action) {
+    return;
+  }
+
+  // Consumimos la acción antes de ejecutarla.
+  // Así evitamos que se ejecute dos veces.
+  pendingPatientActionRef.current = null;
+
+  if (action.type === 'edit') {
+    setEditPatientVisible(true);
+    return;
+  }
+
+  navigation.navigate('PatientClinicalHistory', {
+    clientId: action.clientId,
+    patientName: action.patientName,
+  });
+};
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -356,24 +384,39 @@ const handleEditPatient = () => {
   setGeneratedCodeExpiresAt(null);
 
   setEditingClient(selectedClient);
-  setPendingEdit(true);
+
+  pendingPatientActionRef.current = {
+    type: 'edit',
+  };
+
   setSelectedClientId(null);
+
+  if (Platform.OS === 'android') {
+  setTimeout(() => {
+    finishPatientModalAction();
+  }, 400);
+}
 };
 const handleOpenClinicalHistory = () => {
   if (!selectedClient || selectedClient.deleted) {
     return;
   }
 
-  setPendingClinicalHistory({
+  pendingPatientActionRef.current = {
+    type: 'clinicalHistory',
     clientId: selectedClient.id,
     patientName: getFullName(selectedClient),
-  });
+  };
 
   setGeneratedLinkingCode(null);
   setGeneratedCodeExpiresAt(null);
-
-  // Cerramos la ficha antes de navegar.
   setSelectedClientId(null);
+
+  if (Platform.OS === 'android') {
+  setTimeout(() => {
+    finishPatientModalAction();
+  }, 400);
+}
 };
 
   const handleDeletePatient = useCallback(
@@ -1029,30 +1072,17 @@ const handleRegenerateLinkingCode = (
 
       {/* FICHA DEL PACIENTE */}
       <Modal
-  visible={selectedClient !== null}
-  animationType="slide"
-  presentationStyle="pageSheet"
-  transparent={false}
-  onRequestClose={closePatientDetail}
-  onDismiss={() => {
-    if (pendingEdit) {
-      setPendingEdit(false);
-      setEditPatientVisible(true);
-      return;
-    }
-
-    if (pendingClinicalHistory) {
-      const patient = pendingClinicalHistory;
-
-      setPendingClinicalHistory(null);
-
-      navigation.navigate(
-        'PatientClinicalHistory',
-        patient
-      );
-    }
-  }}
->
+            visible={selectedClient !== null}
+            animationType="slide"
+            presentationStyle="pageSheet"
+            transparent={false}
+            onRequestClose={closePatientDetail}
+            onDismiss={
+                Platform.OS === 'ios'
+                ? finishPatientModalAction
+                : undefined
+            }
+            >
         <ScrollView
           style={styles.detailContainer}
           contentContainerStyle={{
