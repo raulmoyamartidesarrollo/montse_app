@@ -5398,3 +5398,439 @@ export const deletePatientClinicalSession = onCall(
   }
 
 );
+/**
+ * Registra una valoración del dolor asociada a un episodio clínico.
+ * Cada valoración es histórica e independiente.
+ */
+export const createPatientPainAssessment = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+
+    const uid = request.auth.uid;
+    const input = request.data;
+
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos de la valoración no son válidos."
+      );
+    }
+
+    const allowedKeys = ["clientId", "episodeId", "zones"];
+
+    if (Object.keys(input).some((key) => !allowedKeys.includes(key))) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const validateId = (value: unknown): string => {
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.length > 150 ||
+        value.includes("/") ||
+        value.trim() === "." ||
+        value.trim() === ".."
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador no es válido."
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = validateId(input.clientId);
+    const episodeId = validateId(input.episodeId);
+
+    if (
+      !Array.isArray(input.zones) ||
+      input.zones.length === 0 ||
+      input.zones.length > 24
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Debes indicar entre 1 y 24 zonas corporales."
+      );
+    }
+
+    const validPainTypes = [
+      "muscular",
+      "articular",
+      "punzante",
+      "irradiado",
+      "quemazon",
+      "hormigueo",
+      "otro",
+    ];
+
+    const validFrequencies = [
+      "constante",
+      "intermitente",
+      "ocasional",
+      "movimiento",
+    ];
+
+    const zoneIds = new Set<string>();
+
+    const zones = input.zones.map((rawZone: unknown) => {
+      if (
+        !rawZone ||
+        typeof rawZone !== "object" ||
+        Array.isArray(rawZone)
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Una de las zonas no es válida."
+        );
+      }
+
+      const zone = rawZone as Record<string, unknown>;
+
+      const allowedZoneKeys = [
+        "zoneId",
+        "zoneName",
+        "view",
+        "eva",
+        "painType",
+        "frequency",
+        "observations",
+      ];
+
+      if (
+        Object.keys(zone).some(
+          (key) => !allowedZoneKeys.includes(key)
+        )
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Una zona contiene campos no permitidos."
+        );
+      }
+
+      if (
+        typeof zone.zoneId !== "string" ||
+        !/^[a-zA-Z0-9_-]{1,80}$/.test(zone.zoneId) ||
+        zoneIds.has(zone.zoneId)
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador de una zona no es válido o está duplicado."
+        );
+      }
+
+      zoneIds.add(zone.zoneId);
+
+      if (
+        typeof zone.zoneName !== "string" ||
+        !zone.zoneName.trim() ||
+        zone.zoneName.length > 100
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El nombre de una zona no es válido."
+        );
+      }
+
+      if (zone.view !== "front" && zone.view !== "back") {
+        throw new HttpsError(
+          "invalid-argument",
+          "La vista corporal no es válida."
+        );
+      }
+
+      if (
+        typeof zone.eva !== "number" ||
+        !Number.isInteger(zone.eva) ||
+        zone.eva < 0 ||
+        zone.eva > 10
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "La intensidad EVA debe estar entre 0 y 10."
+        );
+      }
+
+      if (!validPainTypes.includes(String(zone.painType))) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El tipo de dolor no es válido."
+        );
+      }
+
+      if (!validFrequencies.includes(String(zone.frequency))) {
+        throw new HttpsError(
+          "invalid-argument",
+          "La frecuencia del dolor no es válida."
+        );
+      }
+
+      if (
+        typeof zone.observations !== "string" ||
+        zone.observations.length > 2000
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Las observaciones no son válidas."
+        );
+      }
+
+      return {
+        zoneId: zone.zoneId,
+        zoneName: zone.zoneName.trim(),
+        view: zone.view,
+        eva: zone.eva,
+        painType: zone.painType,
+        frequency: zone.frequency,
+        observations: zone.observations.trim(),
+      };
+    });
+
+    await assertClinicalPatientAccess(uid, clientId);
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+    const clientRef = centerRef.collection("clients").doc(clientId);
+    const episodeRef = clientRef
+      .collection("clinicalEpisodes")
+      .doc(episodeId);
+
+    const assessmentRef = episodeRef
+      .collection("painAssessments")
+      .doc();
+
+    const auditRef = assessmentRef.collection("events").doc();
+    const episodeAuditRef = episodeRef.collection("events").doc();
+
+    await db.runTransaction(async (transaction) => {
+      const [
+        userSnapshot,
+        centerSnapshot,
+        clientSnapshot,
+        episodeSnapshot,
+      ] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(centerRef),
+        transaction.get(clientRef),
+        transaction.get(episodeRef),
+      ]);
+
+      if (
+        !userSnapshot.exists ||
+        !centerSnapshot.exists ||
+        !clientSnapshot.exists ||
+        !episodeSnapshot.exists
+      ) {
+        throw new HttpsError(
+          "not-found",
+          "No se ha encontrado el usuario, centro, paciente o episodio."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper =
+        roles.includes("developer") &&
+        clientData?.isTest === true;
+
+      if (
+        userData?.centerId !== CENTER_ID ||
+        (!isOwner && !isDeveloper)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para registrar esta valoración."
+        );
+      }
+
+      if (clientData?.deleted === true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "El paciente está en la papelera."
+        );
+      }
+
+      if (episodeSnapshot.data()?.status !== "open") {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se pueden registrar valoraciones en un episodio cerrado."
+        );
+      }
+
+      transaction.create(assessmentRef, {
+        clientId,
+        episodeId,
+        zones,
+        createdBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      transaction.create(auditRef, {
+        type: "created",
+        performedBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      transaction.create(episodeAuditRef, {
+        type: "pain_assessment_created",
+        assessmentId: assessmentRef.id,
+        zoneCount: zones.length,
+        performedBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {
+      success: true,
+      clientId,
+      episodeId,
+      assessmentId: assessmentRef.id,
+    };
+  }
+);
+
+/**
+ * Obtiene el historial de valoraciones del dolor
+ * asociado a un episodio clínico.
+ *
+ * Las valoraciones se devuelven de más reciente
+ * a más antigua.
+ */
+export const getPatientPainAssessments = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos de consulta no son válidos."
+      );
+    }
+
+    const allowedKeys = ["clientId", "episodeId"];
+
+    if (
+      Object.keys(input).some(
+        (key) => !allowedKeys.includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const validateId = (value: unknown): string => {
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.length > 150 ||
+        value.includes("/") ||
+        value.trim() === "." ||
+        value.trim() === ".."
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador no es válido."
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = validateId(input.clientId);
+    const episodeId = validateId(input.episodeId);
+
+    // Validar permisos clínicos antes de consultar los datos.
+    await assertClinicalPatientAccess(uid, clientId);
+
+    const episodeRef = db
+      .collection("centers")
+      .doc(CENTER_ID)
+      .collection("clients")
+      .doc(clientId)
+      .collection("clinicalEpisodes")
+      .doc(episodeId);
+
+    const episodeSnapshot = await episodeRef.get();
+
+    if (!episodeSnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "El episodio clínico no existe."
+      );
+    }
+
+    const assessmentsSnapshot = await episodeRef
+      .collection("painAssessments")
+      .orderBy("createdAt", "desc")
+      .limit(100)
+      .get();
+
+    const assessments = assessmentsSnapshot.docs.map(
+      (document) => {
+        const data = document.data();
+
+        return {
+          assessmentId: document.id,
+          clientId,
+          episodeId,
+          createdBy:
+            typeof data.createdBy === "string"
+              ? data.createdBy
+              : "",
+          createdAt:
+            data.createdAt instanceof Timestamp
+              ? data.createdAt.toDate().toISOString()
+              : null,
+          zones: Array.isArray(data.zones)
+            ? data.zones
+            : [],
+        };
+      }
+    );
+
+    return {
+      success: true,
+      clientId,
+      episodeId,
+      assessments,
+    };
+  }
+);

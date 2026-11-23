@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,7 +15,16 @@ import Svg, {
   G,
 } from 'react-native-svg';
 
-type BodyView = 'front' | 'back';
+import ClinicalPainZoneForm from './ClinicalPainZoneForm';
+
+import {
+  createPatientPainAssessment,
+} from '../../services/clinicalPainAssessments';
+
+import type {
+  BodyView,
+  ClinicalPainZone,
+} from '../../types/clinicalPain';
 
 interface BodyZone {
   id: string;
@@ -23,6 +34,9 @@ interface BodyZone {
 }
 
 interface Props {
+  clientId?: string;
+  episodeId?: string;
+  episodeStatus?: 'open' | 'closed';
   onZonePress?: (zone: BodyZone) => void;
 }
 
@@ -176,23 +190,122 @@ const BODY_ZONES: BodyZone[] = [
   },
 ];
 
-export default function BodyPainMap({ onZonePress }: Props) {
+export default function BodyPainMap({
+  clientId,
+  episodeId,
+  episodeStatus,
+  onZonePress,
+}: Props) {
   const [bodyView, setBodyView] = useState<BodyView>('front');
-  const [selectedZones, setSelectedZones] = useState<string[]>([]);
+  const [assessments, setAssessments] = useState<
+    Record<string, ClinicalPainZone>
+  >({});
 
-  const toggleZone = (zone: BodyZone) => {
-    setSelectedZones((current) =>
-      current.includes(zone.id)
-        ? current.filter((id) => id !== zone.id)
-        : [...current, zone.id]
-    );
+  const [editingZone, setEditingZone] = useState<BodyZone | null>(
+    null
+  );
 
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+
+  const canPersist = Boolean(clientId && episodeId);
+  const isReadOnly = canPersist && episodeStatus !== 'open';
+
+  const handleZonePress = (zone: BodyZone) => {
+    if (isReadOnly || savingRef.current) {
+      return;
+    }
+
+    setEditingZone(zone);
     onZonePress?.(zone);
+  };
+
+  const handleSaveAssessment = (value: ClinicalPainZone) => {
+    setAssessments((current) => ({
+      ...current,
+      [value.zoneId]: value,
+    }));
+
+    setEditingZone(null);
+  };
+
+  const handlePersistAssessment = async () => {
+    if (savingRef.current) {
+      return;
+    }
+
+    if (!clientId || !episodeId) {
+      Alert.alert(
+        'No disponible',
+        'Esta valoración no está asociada a un episodio clínico.'
+      );
+      return;
+    }
+
+    if (episodeStatus !== 'open') {
+      Alert.alert(
+        'Episodio cerrado',
+        'No puedes registrar valoraciones en un episodio cerrado.'
+      );
+      return;
+    }
+
+    const zones = Object.values(assessments);
+
+    if (zones.length === 0) {
+      Alert.alert(
+        'Sin zonas valoradas',
+        'Debes valorar al menos una zona corporal.'
+      );
+      return;
+    }
+
+    savingRef.current = true;
+    setSaving(true);
+
+    try {
+      await createPatientPainAssessment({
+        clientId,
+        episodeId,
+        zones,
+      });
+
+      setAssessments({});
+
+      Alert.alert(
+        'Valoración guardada',
+        'La valoración del dolor se ha registrado correctamente.'
+      );
+    } catch (error) {
+      console.error('Error al guardar valoración del dolor:', error);
+
+      Alert.alert(
+        'Error al guardar',
+        'No se ha podido registrar la valoración. Comprueba la conexión e inténtalo de nuevo.'
+      );
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   const visibleZones = BODY_ZONES.filter(
     (zone) => zone.view === bodyView
   );
+
+  if (editingZone) {
+    return (
+      <ClinicalPainZoneForm
+        key={editingZone.id}
+        zoneId={editingZone.id}
+        zoneName={editingZone.name}
+        view={editingZone.view}
+        initialValue={assessments[editingZone.id]}
+        onSave={handleSaveAssessment}
+        onCancel={() => setEditingZone(null)}
+      />
+    );
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -249,7 +362,7 @@ export default function BodyPainMap({ onZonePress }: Props) {
         >
           <G>
             {visibleZones.map((zone) => {
-              const selected = selectedZones.includes(zone.id);
+              const selected = Boolean(assessments[zone.id]);
 
               return (
                 <Path
@@ -258,7 +371,7 @@ export default function BodyPainMap({ onZonePress }: Props) {
                   fill={selected ? '#EF4444' : '#CBD5E1'}
                   stroke={selected ? '#B91C1C' : '#64748B'}
                   strokeWidth={selected ? 2 : 1}
-                  onPress={() => toggleZone(zone)}
+                  onPress={() => handleZonePress(zone)}
                 />
               );
             })}
@@ -302,23 +415,75 @@ export default function BodyPainMap({ onZonePress }: Props) {
 
       <View style={styles.selectedContainer}>
         <Text style={styles.selectedTitle}>
-          Zonas seleccionadas ({selectedZones.length})
+          Zonas valoradas ({Object.keys(assessments).length})
         </Text>
 
-        {selectedZones.length === 0 ? (
+        {Object.keys(assessments).length === 0 ? (
           <Text style={styles.emptyText}>
-            Todavía no has seleccionado ninguna zona.
+            Todavía no has valorado ninguna zona.
           </Text>
         ) : (
           BODY_ZONES.filter((zone) =>
-            selectedZones.includes(zone.id)
+            Boolean(assessments[zone.id])
           ).map((zone) => (
-            <Text key={zone.id} style={styles.zoneText}>
-              • {zone.name}
-            </Text>
+            <Pressable
+              key={zone.id}
+              onPress={() => handleZonePress(zone)}
+            >
+              <Text style={styles.zoneText}>
+                • {zone.name} — EVA {assessments[zone.id].eva}/10
+              </Text>
+            </Pressable>
           ))
         )}
       </View>
+
+      {canPersist && (
+        <View style={{ marginTop: 24 }}>
+          {isReadOnly ? (
+            <Text
+              style={{
+                color: '#64748B',
+                textAlign: 'center',
+                fontSize: 14,
+              }}
+            >
+              Este episodio está cerrado. No se pueden registrar
+              nuevas valoraciones.
+            </Text>
+          ) : (
+            <Pressable
+              disabled={
+                saving || Object.keys(assessments).length === 0
+              }
+              onPress={handlePersistAssessment}
+              style={{
+                backgroundColor:
+                  saving || Object.keys(assessments).length === 0
+                    ? '#94A3B8'
+                    : '#2563EB',
+                paddingVertical: 15,
+                borderRadius: 12,
+                alignItems: 'center',
+              }}
+            >
+              {saving ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text
+                  style={{
+                    color: '#FFFFFF',
+                    fontWeight: '700',
+                    fontSize: 15,
+                  }}
+                >
+                  Guardar valoración
+                </Text>
+              )}
+            </Pressable>
+          )}
+        </View>
+      )}
     </ScrollView>
   );
 }

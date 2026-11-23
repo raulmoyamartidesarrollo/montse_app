@@ -356,7 +356,11 @@ export default function ClinicalEpisodeDetail({
       {/* MAPA DEL DOLOR */}
       {activeTab === 'painMap' && (
         <View style={styles.sectionCard}>
-          <BodyPainMap />
+          <BodyPainMap
+            clientId={clientId}
+            episodeId={episodeId}
+            episodeStatus={episode.status}
+          />
         </View>
       )}
 
