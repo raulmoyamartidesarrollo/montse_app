@@ -1,3 +1,4 @@
+import BodyPainMap from '../../components/clinical/BodyPainMap';
 import React, {
   useCallback,
   useEffect,
@@ -564,23 +565,7 @@ const handleReopenEpisode = (episode: ClinicalEpisode) => {
 
         {activeTab === 'painMap' && (
           <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <Ionicons
-                name="body-outline"
-                size={22}
-                color={colors.primary}
-              />
-
-              <Text style={styles.sectionTitle}>
-                Mapa del dolor
-              </Text>
-            </View>
-
-            <Text style={styles.sectionDescription}>
-              Aquí incorporaremos una representación
-              corporal para registrar las zonas afectadas
-              y su evolución.
-            </Text>
+            <BodyPainMap />
           </View>
         )}
 

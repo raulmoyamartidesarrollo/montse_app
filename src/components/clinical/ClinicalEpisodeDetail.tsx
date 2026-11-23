@@ -1,3 +1,4 @@
+import BodyPainMap from './BodyPainMap';
 import React, { useCallback, useEffect, useState } from 'react';
 
 import {
@@ -355,14 +356,7 @@ export default function ClinicalEpisodeDetail({
       {/* MAPA DEL DOLOR */}
       {activeTab === 'painMap' && (
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>
-            Mapa del dolor
-          </Text>
-
-          <Text style={styles.message}>
-            Aquí incorporaremos el mapa corporal para
-            registrar las zonas afectadas en cada sesión.
-          </Text>
+          <BodyPainMap />
         </View>
       )}
 
