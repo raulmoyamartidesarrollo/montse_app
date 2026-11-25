@@ -16,6 +16,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors } from '../../theme/colors';
+import { useClinicalDraftContext } from '../../contexts/ClinicalDraftContext';
 
 import {
   getPatientClinicalEpisodes,
@@ -39,6 +40,8 @@ export default function PatientClinicalPainMap({
   onCreateEpisode,
 }: Props) {
   const isEvolutionMode = mode === 'evolution';
+
+  const { confirmNavigation } = useClinicalDraftContext();
 
   const [episodes, setEpisodes] = useState<
     ClinicalEpisode[]
@@ -151,8 +154,35 @@ export default function PatientClinicalPainMap({
   const handleSelectEpisode = (
     episode: ClinicalEpisode
   ) => {
-    setSelectedEpisodeId(episode.episodeId);
-    setSelectorOpen(false);
+    if (episode.clientId !== clientId) return;
+
+    if (episode.episodeId === selectedEpisodeId) {
+      setSelectorOpen(false);
+      return;
+    }
+
+    confirmNavigation(() => {
+      setSelectedEpisodeId(episode.episodeId);
+      setSelectorOpen(false);
+    });
+  };
+
+  const handleCreateEpisode = () => {
+    if (!onCreateEpisode) return;
+
+    confirmNavigation(() => {
+      onCreateEpisode();
+    });
+  };
+
+  const handleOpenTreatments = () => {
+    if (!selectedEpisode || !onOpenTreatments) return;
+
+    if (selectedEpisode.clientId !== clientId) return;
+
+    confirmNavigation(() => {
+      onOpenTreatments(selectedEpisode);
+    });
   };
 
   const openEpisodes = episodes.filter(
@@ -277,7 +307,7 @@ export default function PatientClinicalPainMap({
             accessibilityRole="button"
             accessibilityLabel="Crear nuevo episodio clínico"
             style={styles.createEpisodeButton}
-            onPress={onCreateEpisode}
+            onPress={handleCreateEpisode}
           >
             <Ionicons
               name="add-circle-outline"
@@ -475,7 +505,7 @@ export default function PatientClinicalPainMap({
                   accessibilityRole="button"
                   accessibilityLabel="Ver sesiones de tratamiento"
                   style={styles.treatmentsButton}
-                  onPress={() => onOpenTreatments(selectedEpisode)}
+                  onPress={handleOpenTreatments}
                 >
                   <Ionicons
                     name="clipboard-outline"

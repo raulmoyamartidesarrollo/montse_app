@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import { useClinicalDraftGuard } from '../../hooks/useClinicalDraftGuard';
+
+import React, { useRef, useState } from 'react';
 
 import {
   ActivityIndicator,
@@ -123,19 +125,32 @@ export default function CreateClinicalSessionForm({
   const [evolution, setEvolution] = useState(session?.evolution ?? '');
 
   const [saving, setSaving] = useState(false);
+  const [savedSuccessfully, setSavedSuccessfully] = useState(false);
+
+  const savingRef = useRef(false);
+  const savedRef = useRef(false);
+
+  const formLocked = saving || savedSuccessfully;
 
   const [initialDate] = useState(sessionDate);
 
   const hasChanges =
+    !savedSuccessfully && (
     sessionDate !== initialDate ||
     painLevel !== (session?.painLevel ?? null) ||
     symptoms !== (session?.symptoms ?? '') ||
     treatment !== (session?.treatment ?? '') ||
     exercises !== (session?.exercises ?? '') ||
-    evolution !== (session?.evolution ?? '');
+    evolution !== (session?.evolution ?? '')
+    );
+
+  useClinicalDraftGuard({
+    dirty: hasChanges,
+    saving,
+  });
 
   const handleCancel = () => {
-    if (saving) return;
+    if (savingRef.current || savedRef.current) return;
 
     if (!hasChanges) {
       onCancel();
@@ -160,7 +175,7 @@ export default function CreateClinicalSessionForm({
   };
 
   const handleSave = async () => {
-    if (saving) {
+    if (savingRef.current || savedRef.current) {
       return;
     }
 
@@ -199,7 +214,9 @@ export default function CreateClinicalSessionForm({
     }
 
     try {
+      savingRef.current = true;
       setSaving(true);
+      setShowDatePicker(false);
 
       const input = {
         clientId,
@@ -221,6 +238,9 @@ export default function CreateClinicalSessionForm({
         await createPatientClinicalSession(input);
       }
 
+      savedRef.current = true;
+      setSavedSuccessfully(true);
+
       Alert.alert(
         isEditing ? 'Sesión actualizada' : 'Sesión registrada',
         isEditing
@@ -231,7 +251,8 @@ export default function CreateClinicalSessionForm({
             text: 'Aceptar',
             onPress: onSaved,
           },
-        ]
+        ],
+        { cancelable: false }
       );
     } catch (error) {
       console.error(
@@ -244,6 +265,7 @@ export default function CreateClinicalSessionForm({
         'No se ha podido registrar la sesión. Comprueba tu conexión e inténtalo de nuevo.'
       );
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -266,7 +288,7 @@ export default function CreateClinicalSessionForm({
         multiline
         textAlignVertical="top"
         maxLength={MAX_TEXT_LENGTH}
-        editable={!saving}
+        editable={!formLocked}
       />
     </View>
   );
@@ -283,7 +305,7 @@ export default function CreateClinicalSessionForm({
         <View style={styles.header}>
           <Pressable
             onPress={handleCancel}
-            disabled={saving}
+            disabled={formLocked}
             style={styles.backButton}
           >
             <Ionicons
@@ -313,7 +335,7 @@ export default function CreateClinicalSessionForm({
 
           <Pressable
             style={styles.dateButton}
-            disabled={saving}
+            disabled={formLocked}
             accessibilityRole="button"
             accessibilityLabel="Seleccionar fecha de la sesión"
             accessibilityState={{ expanded: showDatePicker }}
@@ -381,7 +403,7 @@ export default function CreateClinicalSessionForm({
             {Array.from({ length: 11 }, (_, index) => (
               <Pressable
                 key={index}
-                disabled={saving}
+                disabled={formLocked}
                 onPress={() => setPainLevel(index)}
                 accessibilityRole="button"
                 accessibilityLabel={`EVA ${index}: ${getPainLabel(index)}`}
@@ -453,7 +475,7 @@ export default function CreateClinicalSessionForm({
           <Pressable
             style={styles.cancelButton}
             onPress={handleCancel}
-            disabled={saving}
+            disabled={formLocked}
           >
             <Text style={styles.cancelButtonText}>
               Cancelar
@@ -463,10 +485,10 @@ export default function CreateClinicalSessionForm({
           <Pressable
             style={[
               styles.saveButton,
-              saving && styles.disabledButton,
+              formLocked && styles.disabledButton,
             ]}
             onPress={() => void handleSave()}
-            disabled={saving}
+            disabled={formLocked}
           >
             {saving ? (
               <ActivityIndicator color="#FFFFFF" />

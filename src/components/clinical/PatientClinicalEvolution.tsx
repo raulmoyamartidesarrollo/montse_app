@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   ActivityIndicator,
@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors } from '../../theme/colors';
+import { useClinicalDraftGuard } from '../../hooks/useClinicalDraftGuard';
 
 import {
   getPatientClinicalEpisodes,
@@ -52,6 +53,13 @@ export default function PatientClinicalEvolution({
   const [episodesCount, setEpisodesCount] = useState(0);
   const [editingEntry, setEditingEntry] = useState<EvolutionEntry | null>(null);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+
+  const deletingSessionRef = useRef(false);
+
+  useClinicalDraftGuard({
+    dirty: false,
+    saving: deletingSessionId !== null,
+  });
 
   const loadEvolution = useCallback(async () => {
     try {
@@ -111,7 +119,10 @@ export default function PatientClinicalEvolution({
   }, [loadEvolution]);
 
   const handleDelete = (entry: EvolutionEntry) => {
-    if (entry.episode.status !== 'open' || deletingSessionId) {
+    if (
+      entry.episode.status !== 'open' ||
+      deletingSessionRef.current
+    ) {
       return;
     }
 
@@ -124,8 +135,12 @@ export default function PatientClinicalEvolution({
           text: 'Eliminar',
           style: 'destructive',
           onPress: async () => {
+            if (deletingSessionRef.current) return;
+
+            deletingSessionRef.current = true;
+            setDeletingSessionId(entry.session.sessionId);
+
             try {
-              setDeletingSessionId(entry.session.sessionId);
 
               await deletePatientClinicalSession({
                 clientId,
@@ -141,6 +156,7 @@ export default function PatientClinicalEvolution({
                 'No se ha podido eliminar la sesión clínica.'
               );
             } finally {
+              deletingSessionRef.current = false;
               setDeletingSessionId(null);
             }
           },
@@ -203,7 +219,11 @@ export default function PatientClinicalEvolution({
 
         <Pressable
           style={styles.refreshButton}
-          onPress={() => void loadEvolution()}
+          onPress={() => {
+            if (deletingSessionRef.current) return;
+            void loadEvolution();
+          }}
+          disabled={Boolean(deletingSessionId)}
         >
           <Ionicons
             name="refresh-outline"
@@ -232,7 +252,11 @@ export default function PatientClinicalEvolution({
         </View>
 
         <Pressable
-          onPress={() => void loadEvolution()}
+          onPress={() => {
+            if (deletingSessionRef.current) return;
+            void loadEvolution();
+          }}
+          disabled={Boolean(deletingSessionId)}
           style={styles.refreshButton}
           accessibilityLabel="Actualizar evolución clínica"
         >
@@ -300,7 +324,10 @@ export default function PatientClinicalEvolution({
               <View style={styles.sessionActions}>
                 <Pressable
                   style={styles.editButton}
-                  onPress={() => setEditingEntry({ episode, session })}
+                  onPress={() => {
+                    if (deletingSessionRef.current) return;
+                    setEditingEntry({ episode, session });
+                  }}
                   disabled={Boolean(deletingSessionId)}
                 >
                   <Ionicons

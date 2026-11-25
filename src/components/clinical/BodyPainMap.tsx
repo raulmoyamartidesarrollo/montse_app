@@ -1,3 +1,5 @@
+import { useClinicalDraftGuard } from '../../hooks/useClinicalDraftGuard';
+
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -64,6 +66,11 @@ export default function BodyPainMap({
 
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+
+  useClinicalDraftGuard({
+    dirty: Object.keys(assessments).length > 0,
+    saving,
+  });
 
   const [history, setHistory] = useState<
     ClinicalPainAssessment[]

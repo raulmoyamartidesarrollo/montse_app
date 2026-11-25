@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors } from '../../theme/colors';
+import { useClinicalDraftContext } from '../../contexts/ClinicalDraftContext';
 
 import {
   getPatientClinicalEpisode,
@@ -86,6 +87,8 @@ export default function ClinicalEpisodeDetail({
   onClose,
   onReopen,
 }: Props) {
+  const { confirmNavigation } = useClinicalDraftContext();
+
   const [episode, setEpisode] = useState<ClinicalEpisode | null>(
     null
   );
@@ -131,13 +134,52 @@ export default function ClinicalEpisodeDetail({
     void loadEpisode();
   }, [loadEpisode]);
 
+  const handleBack = () => {
+    confirmNavigation(onBack);
+  };
+
+  const handleTabChange = (nextTab: EpisodeTab) => {
+    if (nextTab === activeTab) return;
+
+    confirmNavigation(() => {
+      setActiveTab(nextTab);
+    });
+  };
+
+  const handleEditEpisode = () => {
+    if (!episode || episode.status !== 'open') return;
+
+    confirmNavigation(() => {
+      onEdit(episode);
+    });
+  };
+
+  const handleCloseEpisode = () => {
+    if (!episode || episode.status !== 'open') return;
+
+    confirmNavigation(() => {
+      onClose(episode);
+    });
+  };
+
+  const handleReopenEpisode = () => {
+    if (!episode || episode.status !== 'closed') return;
+
+    confirmNavigation(() => {
+      onReopen(episode);
+    });
+  };
+
   // Abrir el formulario.
   const handleCreateSession = () => {
     if (episode?.status !== 'open') {
       return;
     }
 
-    setShowCreateSession(true);
+    confirmNavigation(() => {
+      setEditingSession(null);
+      setShowCreateSession(true);
+    });
   };
 
   // Volver al listado después de guardar.
@@ -161,7 +203,10 @@ export default function ClinicalEpisodeDetail({
       return;
     }
 
-    setEditingSession(session);
+    confirmNavigation(() => {
+      setShowCreateSession(false);
+      setEditingSession(session);
+    });
   };
 
   const renderField = (label: string, value: string) => (
@@ -202,7 +247,7 @@ export default function ClinicalEpisodeDetail({
           </Text>
         </Pressable>
 
-        <Pressable onPress={onBack}>
+        <Pressable onPress={handleBack}>
           <Text style={styles.actionText}>
             Volver a episodios
           </Text>
@@ -231,7 +276,7 @@ export default function ClinicalEpisodeDetail({
     <View>
       <Pressable
         style={styles.backButton}
-        onPress={onBack}
+        onPress={handleBack}
       >
         <Ionicons
           name="arrow-back"
@@ -283,7 +328,7 @@ export default function ClinicalEpisodeDetail({
                 styles.tab,
                 selected && styles.activeTab,
               ]}
-              onPress={() => setActiveTab(tab.id)}
+              onPress={() => handleTabChange(tab.id)}
             >
               <Ionicons
                 name={tab.icon}
@@ -333,7 +378,7 @@ export default function ClinicalEpisodeDetail({
           {isOpen && (
             <Pressable
               style={styles.primaryButton}
-              onPress={() => onEdit(episode)}
+              onPress={handleEditEpisode}
             >
               <Ionicons
                 name="create-outline"
@@ -390,7 +435,7 @@ export default function ClinicalEpisodeDetail({
         {isOpen ? (
           <Pressable
             style={styles.closeButton}
-            onPress={() => onClose(episode)}
+            onPress={handleCloseEpisode}
           >
             <Ionicons
               name="lock-closed-outline"
@@ -405,7 +450,7 @@ export default function ClinicalEpisodeDetail({
         ) : (
           <Pressable
             style={styles.primaryButton}
-            onPress={() => onReopen(episode)}
+            onPress={handleReopenEpisode}
           >
             <Ionicons
               name="lock-open-outline"

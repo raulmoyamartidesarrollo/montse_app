@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 
@@ -15,6 +16,7 @@ import {
 
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
+import { useClinicalDraftGuard } from '../../hooks/useClinicalDraftGuard';
 
 import {
   type ClinicalSession,
@@ -44,6 +46,13 @@ export default function ClinicalSessionsList({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+
+  const deletingSessionRef = useRef(false);
+
+  useClinicalDraftGuard({
+    dirty: false,
+    saving: deletingSessionId !== null,
+  });
 
   const loadSessions = useCallback(async () => {
     try {
@@ -75,7 +84,7 @@ export default function ClinicalSessionsList({
   }, [loadSessions]);
 
   const handleDeleteSession = (session: ClinicalSession) => {
-    if (episodeStatus !== 'open' || deletingSessionId) {
+    if (episodeStatus !== 'open' || deletingSessionRef.current) {
       return;
     }
 
@@ -88,8 +97,12 @@ export default function ClinicalSessionsList({
           text: 'Eliminar',
           style: 'destructive',
           onPress: async () => {
+            if (deletingSessionRef.current) return;
+
+            deletingSessionRef.current = true;
+            setDeletingSessionId(session.sessionId);
+
             try {
-              setDeletingSessionId(session.sessionId);
 
               await deletePatientClinicalSession({
                 clientId,
@@ -105,6 +118,7 @@ export default function ClinicalSessionsList({
                 'No se ha podido eliminar la sesión clínica.'
               );
             } finally {
+              deletingSessionRef.current = false;
               setDeletingSessionId(null);
             }
           },
@@ -160,7 +174,14 @@ export default function ClinicalSessionsList({
         {episodeStatus === 'open' && (
           <Pressable
             style={styles.createButton}
-            onPress={onCreateSession}
+            onPress={() => {
+              if (deletingSessionRef.current) return;
+              onCreateSession();
+            }}
+            disabled={Boolean(deletingSessionId)}
+            accessibilityState={{
+              disabled: Boolean(deletingSessionId),
+            }}
           >
             <Ionicons
               name="add"
@@ -200,7 +221,11 @@ export default function ClinicalSessionsList({
 
           <Pressable
             style={styles.retryButton}
-            onPress={() => void loadSessions()}
+            onPress={() => {
+              if (deletingSessionRef.current) return;
+              void loadSessions();
+            }}
+            disabled={Boolean(deletingSessionId)}
           >
             <Text style={styles.retryButtonText}>
               Reintentar
@@ -274,7 +299,10 @@ export default function ClinicalSessionsList({
               <View style={styles.sessionActions}>
                 <Pressable
                   style={styles.editButton}
-                  onPress={() => onEditSession(session)}
+                  onPress={() => {
+                    if (deletingSessionRef.current) return;
+                    onEditSession(session);
+                  }}
                   disabled={Boolean(deletingSessionId)}
                 >
                   <Ionicons
