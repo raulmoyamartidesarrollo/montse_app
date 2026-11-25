@@ -8,13 +8,13 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
+import { colors } from '../../theme/colors';
 
 import {
   type ClinicalSession,
@@ -145,15 +145,11 @@ export default function ClinicalSessionsList({
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      nestedScrollEnabled
-    >
+    <View style={styles.content}>
       <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={styles.title}>
-            Evolución clínica
+            Sesiones de tratamiento
           </Text>
 
           <Text style={styles.subtitle}>
@@ -183,7 +179,7 @@ export default function ClinicalSessionsList({
         <View style={styles.centered}>
           <ActivityIndicator
             size="large"
-            color="#2563EB"
+            color={colors.primaryPressed}
           />
 
           <Text style={styles.infoText}>
@@ -195,7 +191,7 @@ export default function ClinicalSessionsList({
           <Ionicons
             name="alert-circle-outline"
             size={32}
-            color="#DC2626"
+            color={colors.error}
           />
 
           <Text style={styles.errorText}>
@@ -239,7 +235,7 @@ export default function ClinicalSessionsList({
                 <Ionicons
                   name="calendar-outline"
                   size={18}
-                  color="#2563EB"
+                  color={colors.primaryPressed}
                 />
 
                 <Text style={styles.sessionDate}>
@@ -284,7 +280,7 @@ export default function ClinicalSessionsList({
                   <Ionicons
                     name="create-outline"
                     size={17}
-                    color="#2563EB"
+                    color={colors.primaryPressed}
                   />
                   <Text style={styles.editButtonText}>
                     Editar
@@ -297,12 +293,12 @@ export default function ClinicalSessionsList({
                   disabled={Boolean(deletingSessionId)}
                 >
                   {deletingSessionId === session.sessionId ? (
-                    <ActivityIndicator size="small" color="#DC2626" />
+                    <ActivityIndicator size="small" color={colors.error} />
                   ) : (
                     <Ionicons
                       name="trash-outline"
                       size={17}
-                      color="#DC2626"
+                      color={colors.error}
                     />
                   )}
                   <Text style={styles.deleteButtonText}>
@@ -314,18 +310,14 @@ export default function ClinicalSessionsList({
           </View>
         ))
       )}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-
   content: {
-    padding: 16,
-    paddingBottom: 32,
+    padding: 8,
+    paddingBottom: 16,
   },
 
   header: {
@@ -339,12 +331,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#0F172A',
+    color: colors.text,
   },
 
   subtitle: {
     fontSize: 13,
-    color: '#64748B',
+    color: colors.textMuted,
     marginTop: 4,
   },
 
@@ -352,7 +344,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primaryPressed,
     borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 16,
@@ -360,20 +352,20 @@ const styles = StyleSheet.create({
   },
 
   createButtonText: {
-    color: '#FFFFFF',
+    color: colors.surface,
     fontWeight: '600',
     marginLeft: 6,
   },
 
   centered: {
-    paddingVertical: 48,
+    paddingVertical: 28,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
   infoText: {
     fontSize: 14,
-    color: '#64748B',
+    color: colors.textMuted,
     textAlign: 'center',
     marginTop: 10,
     lineHeight: 21,
@@ -381,7 +373,7 @@ const styles = StyleSheet.create({
 
   errorText: {
     fontSize: 14,
-    color: '#DC2626',
+    color: colors.error,
     textAlign: 'center',
     marginTop: 10,
   },
@@ -391,33 +383,33 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 18,
     borderRadius: 8,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: colors.surfaceBorder,
   },
 
   retryButtonText: {
-    color: '#334155',
+    color: colors.textSecondary,
     fontWeight: '600',
   },
 
   emptyContainer: {
-    paddingVertical: 48,
+    paddingVertical: 28,
     alignItems: 'center',
   },
 
   emptyTitle: {
     fontSize: 17,
     fontWeight: '600',
-    color: '#334155',
+    color: colors.textSecondary,
     marginTop: 12,
   },
 
   sessionCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: 14,
     padding: 16,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.surfaceBorder,
   },
 
   sessionHeader: {
@@ -436,7 +428,7 @@ const styles = StyleSheet.create({
   sessionDate: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#0F172A',
+    color: colors.text,
   },
 
   painBadge: {
@@ -459,13 +451,13 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748B',
+    color: colors.textMuted,
     marginBottom: 4,
   },
 
   fieldValue: {
     fontSize: 14,
-    color: '#334155',
+    color: colors.textSecondary,
     lineHeight: 21,
   },
 
@@ -484,13 +476,13 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#2563EB',
+    borderColor: colors.primaryPressed,
   },
 
   editButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#2563EB',
+    color: colors.primaryPressed,
   },
 
   deleteButton: {
@@ -502,12 +494,12 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#DC2626',
+    borderColor: colors.error,
   },
 
   deleteButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#DC2626',
+    color: colors.error,
   },
 });

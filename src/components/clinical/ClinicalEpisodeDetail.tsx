@@ -1,4 +1,5 @@
 import BodyPainMap from './BodyPainMap';
+import ClinicalPainEvolution from './ClinicalPainEvolution';
 import React, { useCallback, useEffect, useState } from 'react';
 
 import {
@@ -23,7 +24,11 @@ import type { ClinicalSession } from '../../services/clinicalSessions';
 import ClinicalSessionsList from './ClinicalSessionsList';
 import CreateClinicalSessionForm from './CreateClinicalSessionForm';
 
-type EpisodeTab = 'evolution' | 'painMap' | 'history';
+type EpisodeTab =
+  | 'evolution'
+  | 'painMap'
+  | 'painEvolution'
+  | 'history';
 
 interface Props {
   clientId: string;
@@ -41,8 +46,8 @@ const tabs: {
 }[] = [
   {
     id: 'evolution',
-    label: 'Evolución',
-    icon: 'pulse-outline',
+    label: 'Tratamientos',
+    icon: 'clipboard-outline',
   },
   {
     id: 'painMap',
@@ -50,8 +55,13 @@ const tabs: {
     icon: 'body-outline',
   },
   {
+    id: 'painEvolution',
+    label: 'Evolución EVA',
+    icon: 'analytics-outline',
+  },
+  {
     id: 'history',
-    label: 'Historial',
+    label: 'Datos del episodio',
     icon: 'document-text-outline',
   },
 ];
@@ -84,7 +94,7 @@ export default function ClinicalEpisodeDetail({
   const [error, setError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] =
-    useState<EpisodeTab>('history');
+    useState<EpisodeTab>('evolution');
 
   // Controla si se muestra el formulario de nueva sesión.
   const [showCreateSession, setShowCreateSession] =
@@ -364,6 +374,17 @@ export default function ClinicalEpisodeDetail({
         </View>
       )}
 
+      {/* EVOLUCIÓN DEL DOLOR EVA */}
+      {activeTab === 'painEvolution' && (
+        <View style={styles.sectionCard}>
+          <ClinicalPainEvolution
+            key={`${clientId}-${episodeId}`}
+            clientId={clientId}
+            episodeId={episodeId}
+          />
+        </View>
+      )}
+
       {/* CERRAR O REABRIR EPISODIO */}
       <View style={styles.actions}>
         {isOpen ? (
@@ -418,11 +439,11 @@ const styles = StyleSheet.create({
 
   episodeCard: {
     backgroundColor: colors.surface,
-    borderRadius: 18,
-    padding: 20,
+    borderRadius: 14,
+    padding: 14,
     borderWidth: 1,
     borderColor: colors.surfaceBorder,
-    marginBottom: 18,
+    marginBottom: 12,
   },
 
   title: {
@@ -457,7 +478,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: 14,
     padding: 5,
-    marginBottom: 18,
+    marginBottom: 12,
   },
 
   tab: {
@@ -487,8 +508,8 @@ const styles = StyleSheet.create({
 
   sectionCard: {
     backgroundColor: colors.surface,
-    borderRadius: 18,
-    padding: 20,
+    borderRadius: 14,
+    padding: 10,
     borderWidth: 1,
     borderColor: colors.surfaceBorder,
   },
