@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,23 +15,23 @@ import Svg, {
   G,
 } from 'react-native-svg';
 
+import { Ionicons } from '@expo/vector-icons';
+
 import ClinicalPainZoneForm from './ClinicalPainZoneForm';
+
+import { BODY_ZONES } from '../../constants/bodyZones';
 
 import {
   createPatientPainAssessment,
+  getPatientPainAssessments,
 } from '../../services/clinicalPainAssessments';
 
 import type {
+  BodyZone,
   BodyView,
   ClinicalPainZone,
+  ClinicalPainAssessment,
 } from '../../types/clinicalPain';
-
-interface BodyZone {
-  id: string;
-  name: string;
-  view: BodyView;
-  path: string;
-}
 
 interface Props {
   clientId?: string;
@@ -40,155 +40,7 @@ interface Props {
   onZonePress?: (zone: BodyZone) => void;
 }
 
-const BODY_ZONES: BodyZone[] = [
-  // VISTA FRONTAL
-  {
-    id: 'front-head',
-    name: 'Cabeza',
-    view: 'front',
-    path: 'M85 17 Q100 5 115 17 Q123 30 116 47 Q109 59 100 60 Q91 59 84 47 Q77 30 85 17 Z',
-  },
-  {
-    id: 'front-neck',
-    name: 'Cuello',
-    view: 'front',
-    path: 'M92 58 L108 58 L112 76 L88 76 Z',
-  },
-  {
-    id: 'front-left-shoulder',
-    name: 'Hombro izquierdo',
-    view: 'front',
-    path: 'M112 77 Q132 73 143 91 L135 112 L113 105 Z',
-  },
-  {
-    id: 'front-right-shoulder',
-    name: 'Hombro derecho',
-    view: 'front',
-    path: 'M88 77 Q68 73 57 91 L65 112 L87 105 Z',
-  },
-  {
-    id: 'front-chest',
-    name: 'Pecho',
-    view: 'front',
-    path: 'M88 78 L112 78 L134 108 L127 143 L73 143 L66 108 Z',
-  },
-  {
-    id: 'front-abdomen',
-    name: 'Abdomen',
-    view: 'front',
-    path: 'M73 146 L127 146 L125 192 Q100 204 75 192 Z',
-  },
-  {
-    id: 'front-left-arm',
-    name: 'Brazo izquierdo',
-    view: 'front',
-    path: 'M144 94 Q153 100 157 120 L171 190 Q174 207 164 212 Q155 212 151 196 L137 126 Z',
-  },
-  {
-    id: 'front-right-arm',
-    name: 'Brazo derecho',
-    view: 'front',
-    path: 'M56 94 Q47 100 43 120 L29 190 Q26 207 36 212 Q45 212 49 196 L63 126 Z',
-  },
-  {
-    id: 'front-left-leg',
-    name: 'Pierna izquierda',
-    view: 'front',
-    path: 'M103 197 L125 197 L132 263 L127 339 L105 339 L101 269 Z',
-  },
-  {
-    id: 'front-right-leg',
-    name: 'Pierna derecha',
-    view: 'front',
-    path: 'M97 197 L75 197 L68 263 L73 339 L95 339 L99 269 Z',
-  },
-  {
-    id: 'front-left-foot',
-    name: 'Pie izquierdo',
-    view: 'front',
-    path: 'M105 341 L127 341 Q137 357 138 369 L103 369 Z',
-  },
-  {
-    id: 'front-right-foot',
-    name: 'Pie derecho',
-    view: 'front',
-    path: 'M73 341 L95 341 L97 369 L62 369 Q63 357 73 341 Z',
-  },
 
-  // VISTA POSTERIOR
-  {
-    id: 'back-head',
-    name: 'Cabeza posterior',
-    view: 'back',
-    path: 'M85 17 Q100 5 115 17 Q123 30 116 47 Q109 59 100 60 Q91 59 84 47 Q77 30 85 17 Z',
-  },
-  {
-    id: 'back-neck',
-    name: 'Cervicales',
-    view: 'back',
-    path: 'M92 58 L108 58 L112 76 L88 76 Z',
-  },
-  {
-    id: 'back-left-shoulder',
-    name: 'Hombro izquierdo posterior',
-    view: 'back',
-    path: 'M88 77 Q68 73 57 91 L65 112 L87 105 Z',
-  },
-  {
-    id: 'back-right-shoulder',
-    name: 'Hombro derecho posterior',
-    view: 'back',
-    path: 'M112 77 Q132 73 143 91 L135 112 L113 105 Z',
-  },
-  {
-    id: 'back-upper',
-    name: 'Espalda dorsal',
-    view: 'back',
-    path: 'M88 78 L112 78 L134 108 L127 143 L73 143 L66 108 Z',
-  },
-  {
-    id: 'back-lumbar',
-    name: 'Zona lumbar',
-    view: 'back',
-    path: 'M73 146 L127 146 L125 192 Q100 204 75 192 Z',
-  },
-  {
-    id: 'back-left-arm',
-    name: 'Brazo izquierdo posterior',
-    view: 'back',
-    path: 'M56 94 Q47 100 43 120 L29 190 Q26 207 36 212 Q45 212 49 196 L63 126 Z',
-  },
-  {
-    id: 'back-right-arm',
-    name: 'Brazo derecho posterior',
-    view: 'back',
-    path: 'M144 94 Q153 100 157 120 L171 190 Q174 207 164 212 Q155 212 151 196 L137 126 Z',
-  },
-  {
-    id: 'back-left-leg',
-    name: 'Pierna izquierda posterior',
-    view: 'back',
-    path: 'M97 197 L75 197 L68 263 L73 339 L95 339 L99 269 Z',
-  },
-  {
-    id: 'back-right-leg',
-    name: 'Pierna derecha posterior',
-    view: 'back',
-    path: 'M103 197 L125 197 L132 263 L127 339 L105 339 L101 269 Z',
-  },
-  {
-    id: 'back-left-foot',
-    name: 'Talón izquierdo',
-    view: 'back',
-    path: 'M73 341 L95 341 L97 369 L62 369 Q63 357 73 341 Z',
-  },
-  {
-    id: 'back-right-foot',
-    name: 'Talón derecho',
-    view: 'back',
-    path: 'M105 341 L127 341 Q137 357 138 369 L103 369 Z',
-  },
-];
 
 export default function BodyPainMap({
   clientId,
@@ -208,14 +60,158 @@ export default function BodyPainMap({
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
 
+  const [history, setHistory] = useState<
+    ClinicalPainAssessment[]
+  >([]);
+
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  const [historyError, setHistoryError] = useState<string | null>(
+    null
+  );
+
+  const [selectedAssessmentId, setSelectedAssessmentId] =
+    useState<string | null>(null);
+
+  const historyRequestRef = useRef(0);
+
+  const [mapMode, setMapMode] = useState<'history' | 'new'>(
+    clientId && episodeId ? 'history' : 'new'
+  );
+
   const canPersist = Boolean(clientId && episodeId);
   const isReadOnly = canPersist && episodeStatus !== 'open';
 
-  const handleZonePress = (zone: BodyZone) => {
-    if (isReadOnly || savingRef.current) {
+  const isHistoryMode =
+    canPersist && (mapMode === 'history' || isReadOnly);
+
+  const selectedAssessment = history.find(
+    (item) => item.assessmentId === selectedAssessmentId
+  );
+
+  const displayedAssessments = isHistoryMode
+    ? Object.fromEntries(
+        (selectedAssessment?.zones ?? []).map(
+          (zone) => [zone.zoneId, zone]
+        )
+      )
+    : assessments;
+
+  const formatAssessmentDate = (value: string | null) => {
+    if (!value) {
+      return 'Fecha no disponible';
+    }
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return 'Fecha no disponible';
+    }
+
+    return date.toLocaleString('es-ES', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const loadHistory = useCallback(async () => {
+    if (!clientId || !episodeId) {
       return;
     }
 
+    const requestId = ++historyRequestRef.current;
+
+    setLoadingHistory(true);
+    setHistoryError(null);
+
+    try {
+      const result = await getPatientPainAssessments(
+        clientId,
+        episodeId
+      );
+
+      if (requestId !== historyRequestRef.current) {
+        return;
+      }
+
+      setHistory(result);
+
+      setSelectedAssessmentId((current) =>
+        result.some((item) => item.assessmentId === current)
+          ? current
+          : result[0]?.assessmentId ?? null
+      );
+    } catch {
+      if (requestId !== historyRequestRef.current) {
+        return;
+      }
+
+      setHistoryError(
+        'No se ha podido cargar el historial de valoraciones.'
+      );
+    } finally {
+      if (requestId === historyRequestRef.current) {
+        setLoadingHistory(false);
+      }
+    }
+  }, [clientId, episodeId]);
+
+  useEffect(() => {
+    setHistory([]);
+    setMapMode(clientId && episodeId ? 'history' : 'new');
+    setSelectedAssessmentId(null);
+    setAssessments({});
+    setEditingZone(null);
+    setHistoryError(null);
+    setLoadingHistory(false);
+
+    void loadHistory();
+
+    return () => {
+      historyRequestRef.current += 1;
+    };
+  }, [loadHistory, clientId, episodeId]);
+
+  const handleZonePress = (zone: BodyZone) => {
+
+
+    if (savingRef.current) {
+      return;
+    }
+
+    if (isHistoryMode) {
+      const value = displayedAssessments[zone.id];
+
+      if (value) {
+        Alert.alert(
+          value.zoneName,
+          [
+            `Intensidad EVA: ${value.eva}/10`,
+            `Tipo de dolor: ${value.painType}`,
+            `Frecuencia: ${value.frequency}`,
+            '',
+            `Observaciones: ${value.observations || 'Sin observaciones'}`,
+          ].join('\n')
+        );
+      }
+
+      return;
+    }
+
+    if (isReadOnly) {
+      return;
+    }
+
+    // Si la zona ya está valorada, permitir desmarcarla.
+    if (assessments[zone.id]) {
+      handleRemoveZone(zone);
+      return;
+    }
+
+    // Si no está valorada, abrir el formulario.
     setEditingZone(zone);
     onZonePress?.(zone);
   };
@@ -229,8 +225,43 @@ export default function BodyPainMap({
     setEditingZone(null);
   };
 
+  const handleRemoveZone = (zone: BodyZone) => {
+    if (isHistoryMode || isReadOnly || savingRef.current) {
+      return;
+    }
+
+    Alert.alert(
+      'Eliminar zona valorada',
+      `¿Estás seguro de que deseas eliminar la valoración de ${zone.name.toLowerCase()}?`,
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: () => {
+            if (savingRef.current) {
+              return;
+            }
+
+            setAssessments((current) => {
+              const updated = { ...current };
+
+              delete updated[zone.id];
+
+              return updated;
+            });
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
   const handlePersistAssessment = async () => {
-    if (savingRef.current) {
+    if (isHistoryMode || savingRef.current) {
       return;
     }
 
@@ -271,6 +302,10 @@ export default function BodyPainMap({
       });
 
       setAssessments({});
+      setSelectedAssessmentId(null);
+      setMapMode('history');
+
+      await loadHistory();
 
       Alert.alert(
         'Valoración guardada',
@@ -289,9 +324,21 @@ export default function BodyPainMap({
     }
   };
 
-  const visibleZones = BODY_ZONES.filter(
-    (zone) => zone.view === bodyView
+  const historicalLegacyZones = BODY_ZONES.filter(
+    (zone) =>
+      zone.view === bodyView &&
+      zone.legacy &&
+      Boolean(displayedAssessments[zone.id])
   );
+
+  const visibleZones = [
+    ...BODY_ZONES.filter(
+      (zone) =>
+        zone.view === bodyView &&
+        !zone.legacy
+    ),
+    ...(isHistoryMode ? historicalLegacyZones : []),
+  ];
 
   if (editingZone) {
     return (
@@ -317,6 +364,119 @@ export default function BodyPainMap({
         Pulsa sobre las zonas del cuerpo para identificar
         las regiones afectadas.
       </Text>
+
+      {canPersist && (
+        <View style={{ marginTop: 20, gap: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <Pressable
+              disabled={saving}
+              onPress={() => setMapMode('history')}
+              style={[
+                styles.tab,
+                isHistoryMode && styles.activeTab,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.tabText,
+                  isHistoryMode && styles.activeTabText,
+                ]}
+              >
+                Historial
+              </Text>
+            </Pressable>
+
+            {!isReadOnly && (
+              <Pressable
+                disabled={saving}
+                onPress={() => setMapMode('new')}
+                style={[
+                  styles.tab,
+                  !isHistoryMode && styles.activeTab,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.tabText,
+                    !isHistoryMode && styles.activeTabText,
+                  ]}
+                >
+                  Nueva valoración
+                </Text>
+              </Pressable>
+            )}
+          </View>
+
+          {isHistoryMode && (
+            <View style={{ gap: 10 }}>
+              <Text style={styles.selectedTitle}>
+                Historial de valoraciones ({history.length})
+              </Text>
+
+              {loadingHistory ? (
+                <ActivityIndicator color="#2563EB" />
+              ) : historyError ? (
+                <View style={{ gap: 8 }}>
+                  <Text style={{ color: '#B91C1C' }}>
+                    {historyError}
+                  </Text>
+
+                  <Pressable onPress={() => void loadHistory()}>
+                    <Text style={{ color: '#2563EB' }}>
+                      Reintentar
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : history.length === 0 ? (
+                <Text style={styles.emptyText}>
+                  No hay valoraciones registradas.
+                </Text>
+              ) : (
+                history.map((item) => (
+                  <Pressable
+                    key={item.assessmentId}
+                    onPress={() =>
+                      setSelectedAssessmentId(item.assessmentId)
+                    }
+                    style={{
+                      padding: 12,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor:
+                        selectedAssessmentId === item.assessmentId
+                          ? '#2563EB'
+                          : '#E2E8F0',
+                      backgroundColor:
+                        selectedAssessmentId === item.assessmentId
+                          ? '#EFF6FF'
+                          : '#FFFFFF',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontWeight: '700',
+                        color: '#0F172A',
+                      }}
+                    >
+                      {formatAssessmentDate(item.createdAt)}
+                    </Text>
+
+                    <Text style={{ color: '#64748B', marginTop: 4 }}>
+                      {item.zones.length} zonas valoradas
+                    </Text>
+                  </Pressable>
+                ))
+              )}
+            </View>
+          )}
+
+          {!isHistoryMode && (
+            <Text style={{ color: '#2563EB', fontWeight: '600' }}>
+              Registrando una nueva valoración del dolor
+            </Text>
+          )}
+        </View>
+      )}
 
       <View style={styles.tabs}>
         <Pressable
@@ -355,90 +515,429 @@ export default function BodyPainMap({
       </View>
 
       <View style={styles.mapContainer}>
+
+        <View style={styles.orientationRow}>
+          <View style={styles.orientationBadge}>
+            <Text style={styles.orientationLetter}>
+              {bodyView === 'front' ? 'D' : 'I'}
+            </Text>
+            <Text style={styles.orientationLabel}>
+              {bodyView === 'front' ? 'Derecha' : 'Izquierda'}
+            </Text>
+          </View>
+
+          <Text style={styles.orientationTitle}>
+            {bodyView === 'front' ? 'Anterior' : 'Posterior'}
+          </Text>
+
+          <View style={styles.orientationBadge}>
+            <Text style={styles.orientationLetter}>
+              {bodyView === 'front' ? 'I' : 'D'}
+            </Text>
+            <Text style={styles.orientationLabel}>
+              {bodyView === 'front' ? 'Izquierda' : 'Derecha'}
+            </Text>
+          </View>
+        </View>
+
         <Svg
           width="260"
           height="480"
           viewBox="0 0 200 380"
         >
-          <G>
+          <G pointerEvents="none">
             {visibleZones.map((zone) => {
-              const selected = Boolean(assessments[zone.id]);
+              const selected = Boolean(displayedAssessments[zone.id]);
 
               return (
                 <Path
                   key={zone.id}
                   d={zone.path}
-                  fill={selected ? '#EF4444' : '#CBD5E1'}
+                  fill={
+                    selected
+                      ? '#EF4444'
+                      : zone.category === 'joint'
+                        ? '#94A3B8'
+                        : zone.category === 'tendon'
+                          ? '#B0C4DE'
+                          : '#CBD5E1'
+                  }
                   stroke={selected ? '#B91C1C' : '#64748B'}
                   strokeWidth={selected ? 2 : 1}
-                  onPress={() => handleZonePress(zone)}
                 />
               );
             })}
           </G>
 
-          <Circle
-            cx="100"
-            cy="28"
-            r="2"
-            fill="#64748B"
-            pointerEvents="none"
-          />
+          {/* DETALLES ANATÓMICOS */}
+          <G pointerEvents="none">
+
+            {bodyView === 'front' ? (
+              <G
+                stroke="#475569"
+                strokeWidth={1.1}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+                opacity={0.8}
+              >
+                {/* CARA */}
+                <Circle
+                  cx="93"
+                  cy="29"
+                  r="1.8"
+                  fill="#475569"
+                  stroke="none"
+                />
+
+                <Circle
+                  cx="107"
+                  cy="29"
+                  r="1.8"
+                  fill="#475569"
+                  stroke="none"
+                />
+
+                {/* Cejas */}
+                <Path d="M89 25 Q93 23 97 25" />
+                <Path d="M103 25 Q107 23 111 25" />
+
+                {/* Nariz */}
+                <Path d="M100 31 L98 39 Q100 41 102 39" />
+
+                {/* Boca */}
+                <Path d="M94 46 Q100 49 106 46" />
+
+                {/* Orejas */}
+                <Path d="M81 30 Q75 28 78 38 Q79 42 83 41" />
+                <Path d="M119 30 Q125 28 122 38 Q121 42 117 41" />
+
+                {/* CUELLO */}
+                <Path d="M95 61 L97 72" />
+                <Path d="M105 61 L103 72" />
+
+                {/* CLAVÍCULAS */}
+                <Path d="M76 86 Q89 82 98 89" />
+                <Path d="M102 89 Q111 82 124 86" />
+
+                {/* PECTORALES */}
+                <Path d="M100 90 L100 120" />
+                <Path d="M76 109 Q85 125 98 119" />
+                <Path d="M124 109 Q115 125 102 119" />
+
+                {/* ABDOMINALES */}
+                <Path d="M100 149 L100 185" />
+
+                <Path d="M83 151 Q90 148 97 152" />
+                <Path d="M103 152 Q110 148 117 151" />
+
+                <Path d="M82 162 Q90 166 97 162" />
+                <Path d="M103 162 Q110 166 118 162" />
+
+                <Path d="M83 174 Q90 178 97 174" />
+                <Path d="M103 174 Q110 178 117 174" />
+
+                {/* Ombligo */}
+                <Circle
+                  cx="100"
+                  cy="189"
+                  r="1.5"
+                  fill="#475569"
+                  stroke="none"
+                />
+
+                {/* BÍCEPS */}
+                <Path d="M48 116 Q39 137 43 154" />
+                <Path d="M152 116 Q161 137 157 154" />
+
+                {/* CODOS */}
+                <Path d="M36 164 Q41 167 46 165" />
+                <Path d="M154 165 Q159 167 164 164" />
+
+                {/* CUÁDRICEPS */}
+                <Path d="M85 207 Q77 234 83 253" />
+                <Path d="M115 207 Q123 234 117 253" />
+
+                {/* RODILLAS */}
+                <Path d="M78 266 Q84 260 91 266 L89 276 Q84 280 79 276 Z" />
+                <Path d="M109 266 Q116 260 122 266 L121 276 Q116 280 111 276 Z" />
+
+                {/* TIBIAS */}
+                <Path d="M84 284 L85 329" />
+                <Path d="M116 284 L115 329" />
+
+                {/* DEDOS DE LOS PIES */}
+                <Path d="M71 360 L71 367" />
+                <Path d="M77 359 L77 368" />
+                <Path d="M83 358 L83 368" />
+                <Path d="M90 357 L90 368" />
+
+                <Path d="M110 357 L110 368" />
+                <Path d="M117 358 L117 368" />
+                <Path d="M123 359 L123 368" />
+                <Path d="M129 360 L129 367" />
+              </G>
+
+            ) : (
+
+              <G
+                stroke="#475569"
+                strokeWidth={1.1}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+                opacity={0.8}
+              >
+                {/* PELO POSTERIOR */}
+                <Path
+                  d="M85 18 Q100 6 115 18
+                     Q122 30 116 43
+                     L110 48
+                     Q100 43 90 48
+                     L84 43
+                     Q78 30 85 18 Z"
+                  fill="#64748B"
+                  stroke="#475569"
+                />
+
+                {/* Textura del pelo */}
+                <G stroke="#94A3B8" strokeWidth={0.9}>
+                  <Path d="M89 19 Q86 30 91 42" />
+                  <Path d="M95 15 Q91 30 96 43" />
+                  <Path d="M101 14 Q97 29 101 42" />
+                  <Path d="M107 16 Q104 30 106 43" />
+                  <Path d="M113 20 Q110 31 112 42" />
+                </G>
+
+                {/* Orejas posteriores */}
+                <Path d="M81 30 Q75 28 78 38 Q79 42 83 41" />
+                <Path d="M119 30 Q125 28 122 38 Q121 42 117 41" />
+
+                {/* CERVICALES */}
+                <Path d="M95 59 L96 72" />
+                <Path d="M105 59 L104 72" />
+
+                {/* TRAPECIOS */}
+                <Path d="M100 78 Q88 91 73 96" />
+                <Path d="M100 78 Q112 91 127 96" />
+
+                {/* OMÓPLATOS */}
+                <Path d="M81 96 Q74 109 82 125 L94 111 Z" />
+                <Path d="M119 96 Q126 109 118 125 L106 111 Z" />
+
+                {/* COLUMNA VERTEBRAL */}
+                <Path
+                  d="M100 76
+                     Q98 105 100 130
+                     Q102 155 100 190"
+                  strokeWidth={1.7}
+                />
+
+                {/* Vértebras */}
+                {[82, 90, 98, 106, 114, 122, 130,
+                  138, 150, 158, 166, 174, 182].map((y) => (
+                  <Path
+                    key={y}
+                    d={`M97 ${y} Q100 ${y + 2} 103 ${y}`}
+                    strokeWidth={0.8}
+                  />
+                ))}
+
+                {/* MUSCULATURA LUMBAR */}
+                <Path d="M91 148 Q83 164 91 187" />
+                <Path d="M109 148 Q117 164 109 187" />
+
+                <Path d="M77 180 Q87 184 94 192" />
+                <Path d="M123 180 Q113 184 106 192" />
+
+                {/* GLÚTEOS */}
+                <Path d="M77 200 Q71 213 84 218 Q95 219 97 207" />
+                <Path d="M123 200 Q129 213 116 218 Q105 219 103 207" />
+
+                {/* TRÍCEPS */}
+                <Path d="M48 116 Q37 137 43 154" />
+                <Path d="M152 116 Q163 137 157 154" />
+
+                {/* CODOS POSTERIORES */}
+                <Circle cx="41" cy="166" r="3" />
+                <Circle cx="159" cy="166" r="3" />
+
+                {/* ISQUIOTIBIALES */}
+                <Path d="M84 222 Q77 240 84 257" />
+                <Path d="M116 222 Q123 240 116 257" />
+
+                {/* PARTE POSTERIOR DE RODILLAS */}
+                <Path d="M77 267 Q84 272 92 267" />
+                <Path d="M108 267 Q116 272 123 267" />
+
+                {/* GEMELOS */}
+                <Path d="M78 280 Q72 301 83 316 Q92 302 89 280" />
+                <Path d="M111 280 Q108 302 117 316 Q128 301 122 280" />
+
+                {/* TENDONES DE AQUILES */}
+                <Path d="M83 316 L85 338" />
+                <Path d="M117 316 L115 338" />
+
+                {/* TALONES */}
+                <Path d="M77 349 Q85 345 91 349 L90 362 Q84 366 77 362 Z" />
+                <Path d="M109 349 Q115 345 123 349 L123 362 Q116 366 110 362 Z" />
+
+              </G>
+            )}
+
+          </G>
+          {/* CAPA INTERACTIVA SUPERIOR */}
+          <G>
+            {visibleZones.map((zone) => (
+              <Path
+                key={`touch-${zone.id}`}
+                d={zone.path}
+                fill="#000000"
+                fillOpacity={0.01}
+                stroke="none"
+                onPress={() => handleZonePress(zone)}
+              />
+            ))}
+          </G>
         </Svg>
       </View>
 
-      <View style={styles.legend}>
-        <View style={styles.legendItem}>
-          <View
-            style={[
-              styles.legendColor,
-              { backgroundColor: '#CBD5E1' },
-            ]}
-          />
-          <Text style={styles.legendText}>
-            Zona disponible
-          </Text>
+      <View style={styles.legendContainer}>
+        <Text style={styles.legendTitle}>
+          Referencias del mapa corporal
+        </Text>
+
+        <View style={styles.legend}>
+          {[
+            {
+              color: '#CBD5E1',
+              label: 'Región anatómica',
+            },
+            {
+              color: '#94A3B8',
+              label: 'Articulación',
+            },
+            {
+              color: '#B0C4DE',
+              label: 'Tendón',
+            },
+            {
+              color: '#EF4444',
+              label: 'Zona valorada',
+            },
+          ].map((item) => (
+            <View
+              key={item.label}
+              style={styles.legendItem}
+            >
+              <View
+                style={[
+                  styles.legendColor,
+                  { backgroundColor: item.color },
+                ]}
+              />
+
+              <Text style={styles.legendText}>
+                {item.label}
+              </Text>
+            </View>
+          ))}
         </View>
 
-        <View style={styles.legendItem}>
-          <View
-            style={[
-              styles.legendColor,
-              { backgroundColor: '#EF4444' },
-            ]}
-          />
-          <Text style={styles.legendText}>
-            Zona seleccionada
-          </Text>
-        </View>
+        <Text style={styles.legendNote}>
+          La izquierda y la derecha corresponden
+          a la perspectiva anatómica del paciente.
+        </Text>
       </View>
 
       <View style={styles.selectedContainer}>
         <Text style={styles.selectedTitle}>
-          Zonas valoradas ({Object.keys(assessments).length})
+          Zonas valoradas ({Object.keys(displayedAssessments).length})
         </Text>
 
-        {Object.keys(assessments).length === 0 ? (
+        {Object.keys(displayedAssessments).length === 0 ? (
           <Text style={styles.emptyText}>
             Todavía no has valorado ninguna zona.
           </Text>
         ) : (
           BODY_ZONES.filter((zone) =>
-            Boolean(assessments[zone.id])
+            Boolean(displayedAssessments[zone.id])
           ).map((zone) => (
-            <Pressable
+            <View
               key={zone.id}
-              onPress={() => handleZonePress(zone)}
+              style={styles.zoneRow}
             >
-              <Text style={styles.zoneText}>
-                • {zone.name} — EVA {assessments[zone.id].eva}/10
-              </Text>
-            </Pressable>
+              <Pressable
+                style={styles.zoneInfo}
+                disabled={saving}
+                onPress={() => {
+                  if (isHistoryMode) {
+                    handleZonePress(zone);
+                  } else if (!isReadOnly && !savingRef.current) {
+                    setEditingZone(zone);
+                  }
+                }}
+              >
+                <Text style={styles.zoneText}>
+                  {zone.name}
+                </Text>
+
+                <Text style={styles.zoneEva}>
+                  EVA {displayedAssessments[zone.id].eva}/10
+                </Text>
+              </Pressable>
+
+              {!isHistoryMode && !isReadOnly && (
+                <View style={styles.zoneActions}>
+                  <Pressable
+                    disabled={saving}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Editar ${zone.name}`}
+                    onPress={() => {
+                  if (isHistoryMode) {
+                    handleZonePress(zone);
+                  } else if (!isReadOnly && !savingRef.current) {
+                    setEditingZone(zone);
+                  }
+                }}
+                    style={[
+                      styles.zoneActionButton,
+                      styles.editZoneButton,
+                      saving && styles.disabledZoneButton,
+                    ]}
+                  >
+                    <Ionicons
+                      name="pencil-outline"
+                      size={19}
+                      color="#2563EB"
+                    />
+                  </Pressable>
+
+                  <Pressable
+                    disabled={saving}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Eliminar ${zone.name}`}
+                    onPress={() => handleRemoveZone(zone)}
+                    style={[
+                      styles.zoneActionButton,
+                      styles.deleteZoneButton,
+                      saving && styles.disabledZoneButton,
+                    ]}
+                  >
+                    <Ionicons
+                      name="trash-outline"
+                      size={19}
+                      color="#DC2626"
+                    />
+                  </Pressable>
+                </View>
+              )}
+            </View>
           ))
         )}
       </View>
 
-      {canPersist && (
+      {canPersist && !isHistoryMode && (
         <View style={{ marginTop: 24 }}>
           {isReadOnly ? (
             <Text
@@ -534,16 +1033,67 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     borderRadius: 16,
   },
+  orientationRow: {
+    width: '100%',
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  orientationBadge: {
+    alignItems: 'center',
+    minWidth: 65,
+  },
+  orientationLetter: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#2563EB',
+  },
+  orientationLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#64748B',
+    marginTop: 3,
+  },
+  orientationTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  legendContainer: {
+    marginTop: 16,
+    padding: 14,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  legendTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 12,
+  },
   legend: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 20,
-    marginTop: 16,
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 12,
+  },
+  legendNote: {
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 17,
+    marginTop: 14,
   },
   legendItem: {
+    width: '48%',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
   legendColor: {
     width: 12,
@@ -570,9 +1120,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748B',
   },
+  zoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    gap: 8,
+  },
+  zoneInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
   zoneText: {
-    marginTop: 8,
     fontSize: 14,
+    fontWeight: '600',
     color: '#334155',
+  },
+  zoneEva: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748B',
+  },
+  zoneActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  zoneActionButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editZoneButton: {
+    backgroundColor: '#DBEAFE',
+  },
+  deleteZoneButton: {
+    backgroundColor: '#FEE2E2',
+  },
+  disabledZoneButton: {
+    opacity: 0.5,
   },
 });

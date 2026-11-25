@@ -5455,11 +5455,11 @@ export const createPatientPainAssessment = onCall(
     if (
       !Array.isArray(input.zones) ||
       input.zones.length === 0 ||
-      input.zones.length > 24
+      input.zones.length > 84
     ) {
       throw new HttpsError(
         "invalid-argument",
-        "Debes indicar entre 1 y 24 zonas corporales."
+        "Debes indicar entre 1 y 84 zonas corporales."
       );
     }
 
@@ -5479,6 +5479,96 @@ export const createPatientPainAssessment = onCall(
       "ocasional",
       "movimiento",
     ];
+
+    const validBodyZones = new Map<
+      string,
+      { name: string; view: "front" | "back" }
+    >([
+      ["front-head", { name: "Cabeza", view: "front" }],
+      ["front-neck", { name: "Cuello", view: "front" }],
+      ["front-left-shoulder", { name: "Hombro izquierdo", view: "front" }],
+      ["front-right-shoulder", { name: "Hombro derecho", view: "front" }],
+      ["front-chest", { name: "Pecho", view: "front" }],
+      ["front-abdomen", { name: "Abdomen", view: "front" }],
+      ["front-left-arm", { name: "Brazo izquierdo", view: "front" }],
+      ["front-right-arm", { name: "Brazo derecho", view: "front" }],
+      ["front-left-leg", { name: "Pierna izquierda", view: "front" }],
+      ["front-right-leg", { name: "Pierna derecha", view: "front" }],
+      ["front-left-foot", { name: "Pie izquierdo", view: "front" }],
+      ["front-right-foot", { name: "Pie derecho", view: "front" }],
+      ["back-head", { name: "Cabeza posterior", view: "back" }],
+      ["back-neck", { name: "Cervicales", view: "back" }],
+      ["back-left-shoulder", { name: "Hombro izquierdo posterior", view: "back" }],
+      ["back-right-shoulder", { name: "Hombro derecho posterior", view: "back" }],
+      ["back-upper", { name: "Espalda dorsal", view: "back" }],
+      ["back-lumbar", { name: "Zona lumbar", view: "back" }],
+      ["back-left-arm", { name: "Brazo izquierdo posterior", view: "back" }],
+      ["back-right-arm", { name: "Brazo derecho posterior", view: "back" }],
+      ["back-left-leg", { name: "Pierna izquierda posterior", view: "back" }],
+      ["back-right-leg", { name: "Pierna derecha posterior", view: "back" }],
+      ["back-left-foot", { name: "Talón izquierdo", view: "back" }],
+      ["back-right-foot", { name: "Talón derecho", view: "back" }],
+      ["front-left-upper-arm", { name: "Bíceps izquierdo", view: "front" }],
+      ["front-left-elbow", { name: "Codo izquierdo", view: "front" }],
+      ["front-left-forearm", { name: "Antebrazo izquierdo", view: "front" }],
+      ["front-left-wrist", { name: "Muñeca izquierda", view: "front" }],
+      ["front-left-hand", { name: "Palma de la mano izquierda", view: "front" }],
+      ["front-right-upper-arm", { name: "Bíceps derecho", view: "front" }],
+      ["front-right-elbow", { name: "Codo derecho", view: "front" }],
+      ["front-right-forearm", { name: "Antebrazo derecho", view: "front" }],
+      ["front-right-wrist", { name: "Muñeca derecha", view: "front" }],
+      ["front-right-hand", { name: "Palma de la mano derecha", view: "front" }],
+      ["back-left-upper-arm", { name: "Tríceps izquierdo", view: "back" }],
+      ["back-left-elbow", { name: "Codo izquierdo posterior", view: "back" }],
+      ["back-left-forearm", { name: "Antebrazo izquierdo posterior", view: "back" }],
+      ["back-left-wrist", { name: "Muñeca izquierda posterior", view: "back" }],
+      ["back-left-hand", { name: "Dorso de la mano izquierdo", view: "back" }],
+      ["back-right-upper-arm", { name: "Tríceps derecho", view: "back" }],
+      ["back-right-elbow", { name: "Codo derecho posterior", view: "back" }],
+      ["back-right-forearm", { name: "Antebrazo derecho posterior", view: "back" }],
+      ["back-right-wrist", { name: "Muñeca derecha posterior", view: "back" }],
+      ["back-right-hand", { name: "Dorso de la mano derecho", view: "back" }],
+      ["front-left-hip", { name: "Cadera izquierda", view: "front" }],
+      ["front-left-quadriceps", { name: "Cuádriceps izquierdo", view: "front" }],
+      ["front-left-knee", { name: "Rodilla izquierda", view: "front" }],
+      ["front-left-shin", { name: "Zona tibial izquierda", view: "front" }],
+      ["front-left-ankle", { name: "Tobillo izquierdo", view: "front" }],
+      ["front-right-hip", { name: "Cadera derecha", view: "front" }],
+      ["front-right-quadriceps", { name: "Cuádriceps derecho", view: "front" }],
+      ["front-right-knee", { name: "Rodilla derecha", view: "front" }],
+      ["front-right-shin", { name: "Zona tibial derecha", view: "front" }],
+      ["front-right-ankle", { name: "Tobillo derecho", view: "front" }],
+      ["back-left-hip", { name: "Cadera izquierda posterior", view: "back" }],
+      ["back-left-glute", { name: "Glúteo izquierdo", view: "back" }],
+      ["back-left-hamstrings", { name: "Isquiotibiales izquierdo", view: "back" }],
+      ["back-left-knee", { name: "Rodilla izquierda posterior", view: "back" }],
+      ["back-left-calf", { name: "Gemelo izquierdo", view: "back" }],
+      ["back-left-achilles", { name: "Tendón de Aquiles izquierdo", view: "back" }],
+      ["back-left-ankle", { name: "Tobillo izquierdo posterior", view: "back" }],
+      ["back-right-hip", { name: "Cadera derecha posterior", view: "back" }],
+      ["back-right-glute", { name: "Glúteo derecho", view: "back" }],
+      ["back-right-hamstrings", { name: "Isquiotibiales derecho", view: "back" }],
+      ["back-right-knee", { name: "Rodilla derecha posterior", view: "back" }],
+      ["back-right-calf", { name: "Gemelo derecho", view: "back" }],
+      ["back-right-achilles", { name: "Tendón de Aquiles derecho", view: "back" }],
+      ["back-right-ankle", { name: "Tobillo derecho posterior", view: "back" }],
+      ["front-right-pectoral", { name: "Pectoral derecho", view: "front" }],
+      ["front-left-pectoral", { name: "Pectoral izquierdo", view: "front" }],
+      ["front-sternum", { name: "Esternón", view: "front" }],
+      ["front-abdominals", { name: "Abdominales", view: "front" }],
+      ["front-right-oblique", { name: "Oblicuo derecho", view: "front" }],
+      ["front-left-oblique", { name: "Oblicuo izquierdo", view: "front" }],
+      ["back-left-trapezius", { name: "Trapecio izquierdo", view: "back" }],
+      ["back-right-trapezius", { name: "Trapecio derecho", view: "back" }],
+      ["back-left-scapula", { name: "Omóplato izquierdo", view: "back" }],
+      ["back-right-scapula", { name: "Omóplato derecho", view: "back" }],
+      ["back-left-latissimus", { name: "Dorsal izquierdo", view: "back" }],
+      ["back-right-latissimus", { name: "Dorsal derecho", view: "back" }],
+      ["back-thoracic-spine", { name: "Columna torácica", view: "back" }],
+      ["back-lumbar-spine", { name: "Columna lumbar", view: "back" }],
+      ["back-left-lumbar-muscle", { name: "Musculatura lumbar izquierda", view: "back" }],
+      ["back-right-lumbar-muscle", { name: "Musculatura lumbar derecha", view: "back" }],
+    ]);
 
     const zoneIds = new Set<string>();
 
@@ -5528,6 +5618,15 @@ export const createPatientPainAssessment = onCall(
         );
       }
 
+      const canonicalZone = validBodyZones.get(zone.zoneId);
+
+      if (!canonicalZone) {
+        throw new HttpsError(
+          "invalid-argument",
+          "La zona anatómica indicada no está permitida."
+        );
+      }
+
       zoneIds.add(zone.zoneId);
 
       if (
@@ -5549,6 +5648,16 @@ export const createPatientPainAssessment = onCall(
       }
 
       if (
+        zone.zoneName.trim() !== canonicalZone.name ||
+        zone.view !== canonicalZone.view
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "La zona anatómica no coincide con su nombre o vista corporal."
+        );
+      }
+
+      if (
         typeof zone.eva !== "number" ||
         !Number.isInteger(zone.eva) ||
         zone.eva < 0 ||
@@ -5560,14 +5669,20 @@ export const createPatientPainAssessment = onCall(
         );
       }
 
-      if (!validPainTypes.includes(String(zone.painType))) {
+      if (
+        typeof zone.painType !== "string" ||
+        !validPainTypes.includes(zone.painType)
+      ) {
         throw new HttpsError(
           "invalid-argument",
           "El tipo de dolor no es válido."
         );
       }
 
-      if (!validFrequencies.includes(String(zone.frequency))) {
+      if (
+        typeof zone.frequency !== "string" ||
+        !validFrequencies.includes(zone.frequency)
+      ) {
         throw new HttpsError(
           "invalid-argument",
           "La frecuencia del dolor no es válida."
@@ -5586,8 +5701,8 @@ export const createPatientPainAssessment = onCall(
 
       return {
         zoneId: zone.zoneId,
-        zoneName: zone.zoneName.trim(),
-        view: zone.view,
+        zoneName: canonicalZone.name,
+        view: canonicalZone.view,
         eva: zone.eva,
         painType: zone.painType,
         frequency: zone.frequency,

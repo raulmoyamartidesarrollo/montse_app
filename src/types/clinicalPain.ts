@@ -1,5 +1,26 @@
 export type BodyView = 'front' | 'back';
 
+export type BodyZoneCategory =
+  | 'joint'
+  | 'muscle'
+  | 'tendon'
+  | 'region';
+
+export type BodySide =
+  | 'left'
+  | 'right'
+  | 'central';
+
+export interface BodyZone {
+  id: string;
+  name: string;
+  view: BodyView;
+  path: string;
+  category?: BodyZoneCategory;
+  side?: BodySide;
+  legacy?: boolean;
+}
+
 export type PainType =
   | 'muscular'
   | 'articular'
