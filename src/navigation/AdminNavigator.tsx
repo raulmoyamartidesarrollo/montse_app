@@ -1,4 +1,7 @@
 import React from 'react';
+
+import { TabActions } from '@react-navigation/native';
+import { getClinicalNavigationGuard } from './ClinicalNavigationGuard';
 import {
   View,
   Text,
@@ -95,6 +98,30 @@ export default function AdminNavigator() {
   return (
     <Tab.Navigator
       initialRouteName="Inicio"
+      screenListeners={({ navigation, route }) => ({
+        tabPress: (event) => {
+          const guard = getClinicalNavigationGuard();
+
+          if (!guard || !guard.shouldPreventNavigation()) {
+            return;
+          }
+
+          // El retroceso dentro de Pacientes continúa
+          // protegido mediante usePreventRemove.
+          if (route.name === 'Pacientes') {
+            return;
+          }
+
+          event.preventDefault();
+
+          guard.confirmNavigation(() => {
+            navigation.dispatch({
+              ...TabActions.jumpTo(route.name),
+              target: navigation.getState().key,
+            });
+          });
+        },
+      })}
       screenOptions={({ route }) => ({
         headerShown: false,
 

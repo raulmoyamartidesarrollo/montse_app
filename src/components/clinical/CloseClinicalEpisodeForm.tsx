@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import { useClinicalDraftGuard } from '../../hooks/useClinicalDraftGuard';
+
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -30,9 +32,49 @@ export default function CloseClinicalEpisodeForm({
 }: Props) {
   const [closingReason, setClosingReason] = useState('');
   const [saving, setSaving] = useState(false);
+  const [savedSuccessfully, setSavedSuccessfully] = useState(false);
+
+  const savingRef = useRef(false);
+  const savedRef = useRef(false);
+
+  const formLocked = saving || savedSuccessfully;
+
+  const hasChanges =
+    !savedSuccessfully && closingReason !== '';
+
+  useClinicalDraftGuard({
+    dirty: hasChanges,
+    saving,
+  });
+
+  const handleCancel = () => {
+    if (savingRef.current || savedRef.current) return;
+
+    if (!hasChanges) {
+      onCancel();
+      return;
+    }
+
+    Alert.alert(
+      'Cambios sin guardar',
+      'Has introducido un motivo de cierre. Si continúas, perderás la información introducida y el episodio permanecerá abierto.',
+      [
+        {
+          text: 'Seguir editando',
+          style: 'cancel',
+        },
+        {
+          text: 'Descartar cambios',
+          style: 'destructive',
+          onPress: onCancel,
+        },
+      ],
+      { cancelable: false }
+    );
+  };
 
   const handleClose = async () => {
-    if (saving) return;
+    if (savingRef.current || savedRef.current) return;
 
     if (episode.status !== 'open') {
       Alert.alert(
@@ -51,6 +93,7 @@ export default function CloseClinicalEpisodeForm({
     }
 
     try {
+      savingRef.current = true;
       setSaving(true);
 
       await closePatientClinicalEpisode(
@@ -58,6 +101,9 @@ export default function CloseClinicalEpisodeForm({
         episode.episodeId,
         closingReason.trim()
       );
+
+      savedRef.current = true;
+      setSavedSuccessfully(true);
 
       onClosed();
 
@@ -76,6 +122,7 @@ export default function CloseClinicalEpisodeForm({
         'No se ha podido cerrar el episodio. Comprueba la conexión e inténtalo de nuevo.'
       );
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -120,14 +167,14 @@ export default function CloseClinicalEpisodeForm({
         multiline
         textAlignVertical="top"
         maxLength={2000}
-        editable={!saving}
+        editable={!formLocked}
       />
 
       <View style={styles.actions}>
         <Pressable
           style={styles.cancelButton}
-          onPress={onCancel}
-          disabled={saving}
+          onPress={handleCancel}
+          disabled={formLocked}
         >
           <Text style={styles.cancelButtonText}>
             Cancelar
@@ -137,10 +184,10 @@ export default function CloseClinicalEpisodeForm({
         <Pressable
           style={[
             styles.closeButton,
-            saving && styles.disabledButton,
+            formLocked && styles.disabledButton,
           ]}
           onPress={() => void handleClose()}
-          disabled={saving}
+          disabled={formLocked}
         >
           {saving ? (
             <ActivityIndicator

@@ -1,6 +1,9 @@
+import { useClinicalDraftGuard } from '../../hooks/useClinicalDraftGuard';
+
 import React, { useEffect, useState } from 'react';
 
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -55,6 +58,40 @@ export default function ClinicalPainZoneForm({
     setFrequency(initialValue?.frequency ?? 'intermitente');
     setObservations(initialValue?.observations ?? '');
   }, [zoneId, initialValue]);
+
+  const hasChanges =
+    eva !== (initialValue?.eva ?? 0) ||
+    painType !== (initialValue?.painType ?? 'muscular') ||
+    frequency !== (initialValue?.frequency ?? 'intermitente') ||
+    observations !== (initialValue?.observations ?? '');
+
+  useClinicalDraftGuard({
+    dirty: hasChanges,
+  });
+
+  const handleCancel = () => {
+    if (!hasChanges) {
+      onCancel();
+      return;
+    }
+
+    Alert.alert(
+      'Cambios sin guardar',
+      'Has modificado la valoración de esta zona. Si continúas, perderás los cambios realizados en ella.',
+      [
+        {
+          text: 'Seguir editando',
+          style: 'cancel',
+        },
+        {
+          text: 'Descartar cambios',
+          style: 'destructive',
+          onPress: onCancel,
+        },
+      ],
+      { cancelable: false }
+    );
+  };
 
   const handleSave = () => {
     onSave({
@@ -177,7 +214,7 @@ export default function ClinicalPainZoneForm({
       <View style={styles.actions}>
         <Pressable
           style={styles.cancelButton}
-          onPress={onCancel}
+          onPress={handleCancel}
         >
           <Text style={styles.cancelText}>
             Cancelar

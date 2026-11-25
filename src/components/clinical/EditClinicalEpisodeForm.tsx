@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import { useClinicalDraftGuard } from '../../hooks/useClinicalDraftGuard';
+
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -41,9 +43,55 @@ export default function EditClinicalEpisodeForm({
     useState(episode.observations);
 
   const [saving, setSaving] = useState(false);
+  const [savedSuccessfully, setSavedSuccessfully] = useState(false);
+
+  const savingRef = useRef(false);
+  const savedRef = useRef(false);
+
+  const formLocked = saving || savedSuccessfully;
+
+  const hasChanges =
+    !savedSuccessfully &&
+    (
+      title !== episode.title ||
+      reasonForConsultation !== episode.reasonForConsultation ||
+      affectedArea !== episode.affectedArea ||
+      observations !== episode.observations
+    );
+
+  useClinicalDraftGuard({
+    dirty: hasChanges,
+    saving,
+  });
+
+  const handleCancel = () => {
+    if (savingRef.current || savedRef.current) return;
+
+    if (!hasChanges) {
+      onCancel();
+      return;
+    }
+
+    Alert.alert(
+      'Cambios sin guardar',
+      'Has modificado la información del episodio clínico. Si continúas, perderás los cambios realizados.',
+      [
+        {
+          text: 'Seguir editando',
+          style: 'cancel',
+        },
+        {
+          text: 'Descartar cambios',
+          style: 'destructive',
+          onPress: onCancel,
+        },
+      ],
+      { cancelable: false }
+    );
+  };
 
   const handleSave = async () => {
-    if (saving) return;
+    if (savingRef.current || savedRef.current) return;
 
     if (episode.status !== 'open') {
       Alert.alert(
@@ -71,9 +119,13 @@ export default function EditClinicalEpisodeForm({
     };
 
     try {
+      savingRef.current = true;
       setSaving(true);
 
       await updatePatientClinicalEpisode(input);
+
+      savedRef.current = true;
+      setSavedSuccessfully(true);
 
       Alert.alert(
         'Episodio actualizado',
@@ -92,6 +144,7 @@ export default function EditClinicalEpisodeForm({
         'No se ha podido actualizar el episodio clínico. Comprueba la conexión e inténtalo de nuevo.'
       );
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -125,7 +178,7 @@ export default function EditClinicalEpisodeForm({
         placeholder="Ej. Lumbalgia"
         placeholderTextColor={colors.textMuted}
         maxLength={150}
-        editable={!saving}
+        editable={!formLocked}
       />
 
       <Text style={styles.label}>
@@ -141,7 +194,7 @@ export default function EditClinicalEpisodeForm({
         multiline
         textAlignVertical="top"
         maxLength={2000}
-        editable={!saving}
+        editable={!formLocked}
       />
 
       <Text style={styles.label}>
@@ -155,7 +208,7 @@ export default function EditClinicalEpisodeForm({
         placeholder="Ej. Zona lumbar derecha"
         placeholderTextColor={colors.textMuted}
         maxLength={1000}
-        editable={!saving}
+        editable={!formLocked}
       />
 
       <Text style={styles.label}>
@@ -171,14 +224,14 @@ export default function EditClinicalEpisodeForm({
         multiline
         textAlignVertical="top"
         maxLength={10000}
-        editable={!saving}
+        editable={!formLocked}
       />
 
       <View style={styles.actions}>
         <Pressable
           style={styles.cancelButton}
-          onPress={onCancel}
-          disabled={saving}
+          onPress={handleCancel}
+          disabled={formLocked}
         >
           <Text style={styles.cancelButtonText}>
             Cancelar
@@ -188,10 +241,10 @@ export default function EditClinicalEpisodeForm({
         <Pressable
           style={[
             styles.saveButton,
-            saving && styles.disabledButton,
+            formLocked && styles.disabledButton,
           ]}
           onPress={() => void handleSave()}
-          disabled={saving}
+          disabled={formLocked}
         >
           {saving ? (
             <ActivityIndicator

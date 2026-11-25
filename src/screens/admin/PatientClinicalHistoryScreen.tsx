@@ -1,7 +1,23 @@
+import {
+  ClinicalDraftProvider,
+  useClinicalDraftContext,
+} from '../../contexts/ClinicalDraftContext';
+
+import {
+  useFocusEffect,
+  usePreventRemove,
+} from '@react-navigation/native';
+
+import {
+  registerClinicalNavigationGuard,
+} from '../../navigation/ClinicalNavigationGuard';
+import { useClinicalDraftGuard } from '../../hooks/useClinicalDraftGuard';
+
 import PatientClinicalPainMap from '../../components/clinical/PatientClinicalPainMap';
 import React, {
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 import {
@@ -155,10 +171,37 @@ const tabs: {
   },
 ];
 
-export default function PatientClinicalHistoryScreen({
+export default function PatientClinicalHistoryScreen(
+  props: Props
+) {
+  const [clinicalResetKey, setClinicalResetKey] =
+    useState(0);
+
+  const resetClinicalContent = useCallback(() => {
+    setClinicalResetKey((current) => current + 1);
+  }, []);
+
+  return (
+    <ClinicalDraftProvider
+      key={`${props.route.params.clientId}-${clinicalResetKey}`}
+    >
+      <PatientClinicalHistoryContent
+        {...props}
+        onResetClinicalContent={resetClinicalContent}
+      />
+    </ClinicalDraftProvider>
+  );
+}
+
+type ClinicalContentProps = Props & {
+  onResetClinicalContent: () => void;
+};
+
+function PatientClinicalHistoryContent({
   route,
   navigation,
-}: Props) {
+  onResetClinicalContent,
+}: ClinicalContentProps) {
   const insets = useSafeAreaInsets();
 
 const { clientId, patientName } = route.params;
@@ -196,6 +239,71 @@ const [savingClinical, setSavingClinical] =
 
 const [clinicalForm, setClinicalForm] =
   useState<ClinicalForm>(emptyClinicalForm);
+
+const savingClinicalRef = useRef(false);
+const reopeningEpisodeRef = useRef(false);
+
+useClinicalDraftGuard({
+  dirty: false,
+  saving: reopeningEpisode,
+});
+
+const hasClinicalChanges =
+  editingClinical &&
+  clinicalProfile !== null &&
+  clinicalFields.some(
+    (field) =>
+      clinicalForm[field.key] !== clinicalProfile[field.key]
+  );
+
+useClinicalDraftGuard({
+  dirty: hasClinicalChanges,
+  saving: savingClinical,
+});
+
+const {
+  hasUnsavedChanges,
+  isSaving,
+  confirmNavigation,
+} = useClinicalDraftContext();
+
+usePreventRemove(
+  hasUnsavedChanges || isSaving,
+  ({ data }) => {
+    confirmNavigation(() => {
+      navigation.dispatch(data.action);
+    });
+  }
+);
+
+useFocusEffect(
+  useCallback(() => {
+    return registerClinicalNavigationGuard({
+      shouldPreventNavigation: () => {
+        return (
+          navigation.isFocused() &&
+          (hasUnsavedChanges || isSaving)
+        );
+      },
+
+      confirmNavigation: (action) => {
+        confirmNavigation(() => {
+          if (!navigation.isFocused()) return;
+
+          onResetClinicalContent();
+          action();
+        });
+      },
+    });
+  }, [
+    navigation,
+    hasUnsavedChanges,
+    isSaving,
+    confirmNavigation,
+    onResetClinicalContent,
+  ])
+);
+
 const loadClinicalProfile = useCallback(async () => {
   try {
     setLoadingClinicalProfile(true);
@@ -234,20 +342,46 @@ useEffect(() => {
   loadClinicalProfile,
 ]);
 const startClinicalEditing = () => {
-  if (!clinicalProfile) return;
+  if (!clinicalProfile || savingClinicalRef.current) return;
 
   setClinicalForm(profileToForm(clinicalProfile));
   setEditingClinical(true);
 };
 
-const cancelClinicalEditing = () => {
-  if (savingClinical) return;
+const discardClinicalChanges = () => {
+  if (savingClinicalRef.current) return;
 
   if (clinicalProfile) {
     setClinicalForm(profileToForm(clinicalProfile));
   }
 
   setEditingClinical(false);
+};
+
+const cancelClinicalEditing = () => {
+  if (savingClinicalRef.current) return;
+
+  if (!hasClinicalChanges) {
+    discardClinicalChanges();
+    return;
+  }
+
+  Alert.alert(
+    'Cambios sin guardar',
+    'Has modificado los antecedentes clínicos del paciente. Si continúas, perderás los cambios realizados.',
+    [
+      {
+        text: 'Seguir editando',
+        style: 'cancel',
+      },
+      {
+        text: 'Descartar cambios',
+        style: 'destructive',
+        onPress: discardClinicalChanges,
+      },
+    ],
+    { cancelable: false }
+  );
 };
 
 const updateClinicalField = (
@@ -261,19 +395,48 @@ const updateClinicalField = (
 };
 
 const saveClinicalProfile = async () => {
-  if (savingClinical || !clinicalProfile) return;
+  if (
+    savingClinicalRef.current ||
+    !clinicalProfile ||
+    !editingClinical
+  ) return;
+
+  if (!hasClinicalChanges) {
+    discardClinicalChanges();
+    return;
+  }
+
+  const submittedForm: ClinicalForm = {
+    ...clinicalForm,
+  };
+
+  savingClinicalRef.current = true;
+  setSavingClinical(true);
 
   try {
-    setSavingClinical(true);
-
     await updatePatientClinicalProfile({
       clientId,
-      ...clinicalForm,
+      ...submittedForm,
     });
 
-    const updatedProfile = await getPatientClinicalProfile(
-      clientId
-    );
+    let updatedProfile: PatientClinicalProfile = {
+      ...clinicalProfile,
+      ...submittedForm,
+    };
+
+    let refreshFailed = false;
+
+    try {
+      updatedProfile = await getPatientClinicalProfile(
+        clientId
+      );
+    } catch (error) {
+      refreshFailed = true;
+
+      console.warn(
+        'Antecedentes guardados, pero no se ha podido actualizar la consulta.'
+      );
+    }
 
     setClinicalProfile(updatedProfile);
     setClinicalForm(profileToForm(updatedProfile));
@@ -281,7 +444,9 @@ const saveClinicalProfile = async () => {
 
     Alert.alert(
       'Antecedentes guardados',
-      'La ficha clínica se ha actualizado correctamente.'
+      refreshFailed
+        ? 'Los cambios se han guardado correctamente, pero no se ha podido actualizar la información desde el servidor.'
+        : 'La ficha clínica se ha actualizado correctamente.'
     );
   } catch (error) {
     console.error(
@@ -291,12 +456,31 @@ const saveClinicalProfile = async () => {
 
     Alert.alert(
       'Error',
-      'No se han podido completar los cambios. Comprueba la conexión e inténtalo de nuevo.'
+      'No se ha podido confirmar el guardado de los cambios. Comprueba la conexión e inténtalo de nuevo.'
     );
   } finally {
+    savingClinicalRef.current = false;
     setSavingClinical(false);
   }
 };
+const handleClinicalTabChange = (nextTab: ClinicalTab) => {
+  if (nextTab === activeTab) return;
+
+  confirmNavigation(() => {
+    if (activeTab === 'history') {
+      discardClinicalChanges();
+    }
+
+    if (activeTab === 'episodes') {
+      setCreatingEpisode(false);
+      setEditingEpisode(null);
+      setClosingEpisode(null);
+    }
+
+    setActiveTab(nextTab);
+  });
+};
+
 const handleCreateEpisode = () => {
   setSelectedEpisodeId(null);
   setEditingEpisode(null);
@@ -383,7 +567,9 @@ const handleEpisodeClosed = () => {
 };
 
 const handleReopenEpisode = (episode: ClinicalEpisode) => {
-  if (reopeningEpisode) return;
+  if (reopeningEpisodeRef.current) return;
+
+  if (episode.clientId !== clientId) return;
 
   if (episode.status !== 'closed') {
     Alert.alert(
@@ -405,10 +591,12 @@ const handleReopenEpisode = (episode: ClinicalEpisode) => {
         text: 'Reabrir episodio',
         onPress: () => {
           void (async () => {
-            if (reopeningEpisode) return;
+            if (reopeningEpisodeRef.current) return;
+
+            reopeningEpisodeRef.current = true;
+            setReopeningEpisode(true);
 
             try {
-              setReopeningEpisode(true);
 
               await reopenPatientClinicalEpisode(
                 episode.clientId,
@@ -438,6 +626,7 @@ const handleReopenEpisode = (episode: ClinicalEpisode) => {
                 'No se ha podido reabrir el episodio. Comprueba la conexión e inténtalo de nuevo.'
               );
             } finally {
+              reopeningEpisodeRef.current = false;
               setReopeningEpisode(false);
             }
           })();
@@ -519,7 +708,7 @@ const handleReopenEpisode = (episode: ClinicalEpisode) => {
             return (
               <Pressable
                 key={tab.id}
-                onPress={() => setActiveTab(tab.id)}
+                onPress={() => handleClinicalTabChange(tab.id)}
                 accessibilityRole="tab"
                 accessibilityState={{ selected }}
                 style={[

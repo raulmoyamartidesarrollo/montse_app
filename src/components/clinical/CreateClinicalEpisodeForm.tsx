@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import { useClinicalDraftGuard } from '../../hooks/useClinicalDraftGuard';
+
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -35,9 +37,55 @@ export default function CreateClinicalEpisodeForm({
   const [observations, setObservations] = useState('');
 
   const [saving, setSaving] = useState(false);
+  const [savedSuccessfully, setSavedSuccessfully] = useState(false);
+
+  const savingRef = useRef(false);
+  const savedRef = useRef(false);
+
+  const formLocked = saving || savedSuccessfully;
+
+  const hasChanges =
+    !savedSuccessfully &&
+    (
+      title !== '' ||
+      reasonForConsultation !== '' ||
+      affectedArea !== '' ||
+      observations !== ''
+    );
+
+  useClinicalDraftGuard({
+    dirty: hasChanges,
+    saving,
+  });
+
+  const handleCancel = () => {
+    if (savingRef.current || savedRef.current) return;
+
+    if (!hasChanges) {
+      onCancel();
+      return;
+    }
+
+    Alert.alert(
+      'Cambios sin guardar',
+      'Has introducido información en el nuevo episodio clínico. Si continúas, perderás los cambios realizados.',
+      [
+        {
+          text: 'Seguir editando',
+          style: 'cancel',
+        },
+        {
+          text: 'Descartar cambios',
+          style: 'destructive',
+          onPress: onCancel,
+        },
+      ],
+      { cancelable: false }
+    );
+  };
 
   const handleCreate = async () => {
-    if (saving) return;
+    if (savingRef.current || savedRef.current) return;
 
     if (!title.trim()) {
       Alert.alert(
@@ -56,9 +104,13 @@ export default function CreateClinicalEpisodeForm({
     };
 
     try {
+      savingRef.current = true;
       setSaving(true);
 
       await createPatientClinicalEpisode(input);
+
+      savedRef.current = true;
+      setSavedSuccessfully(true);
 
       Alert.alert(
         'Episodio creado',
@@ -74,6 +126,7 @@ export default function CreateClinicalEpisodeForm({
         'No se ha podido crear el episodio clínico. Comprueba la conexión e inténtalo de nuevo.'
       );
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -107,7 +160,7 @@ export default function CreateClinicalEpisodeForm({
         placeholder="Ej. Lumbalgia"
         placeholderTextColor={colors.textMuted}
         maxLength={150}
-        editable={!saving}
+        editable={!formLocked}
       />
 
       <Text style={styles.label}>
@@ -123,7 +176,7 @@ export default function CreateClinicalEpisodeForm({
         multiline
         textAlignVertical="top"
         maxLength={2000}
-        editable={!saving}
+        editable={!formLocked}
       />
 
       <Text style={styles.label}>
@@ -137,7 +190,7 @@ export default function CreateClinicalEpisodeForm({
         placeholder="Ej. Zona lumbar derecha"
         placeholderTextColor={colors.textMuted}
         maxLength={1000}
-        editable={!saving}
+        editable={!formLocked}
       />
 
       <Text style={styles.label}>
@@ -153,14 +206,14 @@ export default function CreateClinicalEpisodeForm({
         multiline
         textAlignVertical="top"
         maxLength={10000}
-        editable={!saving}
+        editable={!formLocked}
       />
 
       <View style={styles.actions}>
         <Pressable
           style={styles.cancelButton}
-          onPress={onCancel}
-          disabled={saving}
+          onPress={handleCancel}
+          disabled={formLocked}
         >
           <Text style={styles.cancelButtonText}>
             Cancelar
@@ -170,10 +223,10 @@ export default function CreateClinicalEpisodeForm({
         <Pressable
           style={[
             styles.createButton,
-            saving && styles.disabledButton,
+            formLocked && styles.disabledButton,
           ]}
           onPress={() => void handleCreate()}
-          disabled={saving}
+          disabled={formLocked}
         >
           {saving ? (
             <ActivityIndicator
