@@ -5398,3 +5398,554 @@ export const deletePatientClinicalSession = onCall(
   }
 
 );
+/**
+ * Registra una valoración del dolor asociada a un episodio clínico.
+ * Cada valoración es histórica e independiente.
+ */
+export const createPatientPainAssessment = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
+    }
+
+    const uid = request.auth.uid;
+    const input = request.data;
+
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos de la valoración no son válidos."
+      );
+    }
+
+    const allowedKeys = ["clientId", "episodeId", "zones"];
+
+    if (Object.keys(input).some((key) => !allowedKeys.includes(key))) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const validateId = (value: unknown): string => {
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.length > 150 ||
+        value.includes("/") ||
+        value.trim() === "." ||
+        value.trim() === ".."
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador no es válido."
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = validateId(input.clientId);
+    const episodeId = validateId(input.episodeId);
+
+    if (
+      !Array.isArray(input.zones) ||
+      input.zones.length === 0 ||
+      input.zones.length > 84
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Debes indicar entre 1 y 84 zonas corporales."
+      );
+    }
+
+    const validPainTypes = [
+      "muscular",
+      "articular",
+      "punzante",
+      "irradiado",
+      "quemazon",
+      "hormigueo",
+      "otro",
+    ];
+
+    const validFrequencies = [
+      "constante",
+      "intermitente",
+      "ocasional",
+      "movimiento",
+    ];
+
+    const validBodyZones = new Map<
+      string,
+      { name: string; view: "front" | "back" }
+    >([
+      ["front-head", { name: "Cabeza", view: "front" }],
+      ["front-neck", { name: "Cuello", view: "front" }],
+      ["front-left-shoulder", { name: "Hombro izquierdo", view: "front" }],
+      ["front-right-shoulder", { name: "Hombro derecho", view: "front" }],
+      ["front-chest", { name: "Pecho", view: "front" }],
+      ["front-abdomen", { name: "Abdomen", view: "front" }],
+      ["front-left-arm", { name: "Brazo izquierdo", view: "front" }],
+      ["front-right-arm", { name: "Brazo derecho", view: "front" }],
+      ["front-left-leg", { name: "Pierna izquierda", view: "front" }],
+      ["front-right-leg", { name: "Pierna derecha", view: "front" }],
+      ["front-left-foot", { name: "Pie izquierdo", view: "front" }],
+      ["front-right-foot", { name: "Pie derecho", view: "front" }],
+      ["back-head", { name: "Cabeza posterior", view: "back" }],
+      ["back-neck", { name: "Cervicales", view: "back" }],
+      ["back-left-shoulder", { name: "Hombro izquierdo posterior", view: "back" }],
+      ["back-right-shoulder", { name: "Hombro derecho posterior", view: "back" }],
+      ["back-upper", { name: "Espalda dorsal", view: "back" }],
+      ["back-lumbar", { name: "Zona lumbar", view: "back" }],
+      ["back-left-arm", { name: "Brazo izquierdo posterior", view: "back" }],
+      ["back-right-arm", { name: "Brazo derecho posterior", view: "back" }],
+      ["back-left-leg", { name: "Pierna izquierda posterior", view: "back" }],
+      ["back-right-leg", { name: "Pierna derecha posterior", view: "back" }],
+      ["back-left-foot", { name: "Talón izquierdo", view: "back" }],
+      ["back-right-foot", { name: "Talón derecho", view: "back" }],
+      ["front-left-upper-arm", { name: "Bíceps izquierdo", view: "front" }],
+      ["front-left-elbow", { name: "Codo izquierdo", view: "front" }],
+      ["front-left-forearm", { name: "Antebrazo izquierdo", view: "front" }],
+      ["front-left-wrist", { name: "Muñeca izquierda", view: "front" }],
+      ["front-left-hand", { name: "Palma de la mano izquierda", view: "front" }],
+      ["front-right-upper-arm", { name: "Bíceps derecho", view: "front" }],
+      ["front-right-elbow", { name: "Codo derecho", view: "front" }],
+      ["front-right-forearm", { name: "Antebrazo derecho", view: "front" }],
+      ["front-right-wrist", { name: "Muñeca derecha", view: "front" }],
+      ["front-right-hand", { name: "Palma de la mano derecha", view: "front" }],
+      ["back-left-upper-arm", { name: "Tríceps izquierdo", view: "back" }],
+      ["back-left-elbow", { name: "Codo izquierdo posterior", view: "back" }],
+      ["back-left-forearm", { name: "Antebrazo izquierdo posterior", view: "back" }],
+      ["back-left-wrist", { name: "Muñeca izquierda posterior", view: "back" }],
+      ["back-left-hand", { name: "Dorso de la mano izquierdo", view: "back" }],
+      ["back-right-upper-arm", { name: "Tríceps derecho", view: "back" }],
+      ["back-right-elbow", { name: "Codo derecho posterior", view: "back" }],
+      ["back-right-forearm", { name: "Antebrazo derecho posterior", view: "back" }],
+      ["back-right-wrist", { name: "Muñeca derecha posterior", view: "back" }],
+      ["back-right-hand", { name: "Dorso de la mano derecho", view: "back" }],
+      ["front-left-hip", { name: "Cadera izquierda", view: "front" }],
+      ["front-left-quadriceps", { name: "Cuádriceps izquierdo", view: "front" }],
+      ["front-left-knee", { name: "Rodilla izquierda", view: "front" }],
+      ["front-left-shin", { name: "Zona tibial izquierda", view: "front" }],
+      ["front-left-ankle", { name: "Tobillo izquierdo", view: "front" }],
+      ["front-right-hip", { name: "Cadera derecha", view: "front" }],
+      ["front-right-quadriceps", { name: "Cuádriceps derecho", view: "front" }],
+      ["front-right-knee", { name: "Rodilla derecha", view: "front" }],
+      ["front-right-shin", { name: "Zona tibial derecha", view: "front" }],
+      ["front-right-ankle", { name: "Tobillo derecho", view: "front" }],
+      ["back-left-hip", { name: "Cadera izquierda posterior", view: "back" }],
+      ["back-left-glute", { name: "Glúteo izquierdo", view: "back" }],
+      ["back-left-hamstrings", { name: "Isquiotibiales izquierdo", view: "back" }],
+      ["back-left-knee", { name: "Rodilla izquierda posterior", view: "back" }],
+      ["back-left-calf", { name: "Gemelo izquierdo", view: "back" }],
+      ["back-left-achilles", { name: "Tendón de Aquiles izquierdo", view: "back" }],
+      ["back-left-ankle", { name: "Tobillo izquierdo posterior", view: "back" }],
+      ["back-right-hip", { name: "Cadera derecha posterior", view: "back" }],
+      ["back-right-glute", { name: "Glúteo derecho", view: "back" }],
+      ["back-right-hamstrings", { name: "Isquiotibiales derecho", view: "back" }],
+      ["back-right-knee", { name: "Rodilla derecha posterior", view: "back" }],
+      ["back-right-calf", { name: "Gemelo derecho", view: "back" }],
+      ["back-right-achilles", { name: "Tendón de Aquiles derecho", view: "back" }],
+      ["back-right-ankle", { name: "Tobillo derecho posterior", view: "back" }],
+      ["front-right-pectoral", { name: "Pectoral derecho", view: "front" }],
+      ["front-left-pectoral", { name: "Pectoral izquierdo", view: "front" }],
+      ["front-sternum", { name: "Esternón", view: "front" }],
+      ["front-abdominals", { name: "Abdominales", view: "front" }],
+      ["front-right-oblique", { name: "Oblicuo derecho", view: "front" }],
+      ["front-left-oblique", { name: "Oblicuo izquierdo", view: "front" }],
+      ["back-left-trapezius", { name: "Trapecio izquierdo", view: "back" }],
+      ["back-right-trapezius", { name: "Trapecio derecho", view: "back" }],
+      ["back-left-scapula", { name: "Omóplato izquierdo", view: "back" }],
+      ["back-right-scapula", { name: "Omóplato derecho", view: "back" }],
+      ["back-left-latissimus", { name: "Dorsal izquierdo", view: "back" }],
+      ["back-right-latissimus", { name: "Dorsal derecho", view: "back" }],
+      ["back-thoracic-spine", { name: "Columna torácica", view: "back" }],
+      ["back-lumbar-spine", { name: "Columna lumbar", view: "back" }],
+      ["back-left-lumbar-muscle", { name: "Musculatura lumbar izquierda", view: "back" }],
+      ["back-right-lumbar-muscle", { name: "Musculatura lumbar derecha", view: "back" }],
+    ]);
+
+    const zoneIds = new Set<string>();
+
+    const zones = input.zones.map((rawZone: unknown) => {
+      if (
+        !rawZone ||
+        typeof rawZone !== "object" ||
+        Array.isArray(rawZone)
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Una de las zonas no es válida."
+        );
+      }
+
+      const zone = rawZone as Record<string, unknown>;
+
+      const allowedZoneKeys = [
+        "zoneId",
+        "zoneName",
+        "view",
+        "eva",
+        "painType",
+        "frequency",
+        "observations",
+      ];
+
+      if (
+        Object.keys(zone).some(
+          (key) => !allowedZoneKeys.includes(key)
+        )
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Una zona contiene campos no permitidos."
+        );
+      }
+
+      if (
+        typeof zone.zoneId !== "string" ||
+        !/^[a-zA-Z0-9_-]{1,80}$/.test(zone.zoneId) ||
+        zoneIds.has(zone.zoneId)
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador de una zona no es válido o está duplicado."
+        );
+      }
+
+      const canonicalZone = validBodyZones.get(zone.zoneId);
+
+      if (!canonicalZone) {
+        throw new HttpsError(
+          "invalid-argument",
+          "La zona anatómica indicada no está permitida."
+        );
+      }
+
+      zoneIds.add(zone.zoneId);
+
+      if (
+        typeof zone.zoneName !== "string" ||
+        !zone.zoneName.trim() ||
+        zone.zoneName.length > 100
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El nombre de una zona no es válido."
+        );
+      }
+
+      if (zone.view !== "front" && zone.view !== "back") {
+        throw new HttpsError(
+          "invalid-argument",
+          "La vista corporal no es válida."
+        );
+      }
+
+      if (
+        zone.zoneName.trim() !== canonicalZone.name ||
+        zone.view !== canonicalZone.view
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "La zona anatómica no coincide con su nombre o vista corporal."
+        );
+      }
+
+      if (
+        typeof zone.eva !== "number" ||
+        !Number.isInteger(zone.eva) ||
+        zone.eva < 0 ||
+        zone.eva > 10
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "La intensidad EVA debe estar entre 0 y 10."
+        );
+      }
+
+      if (
+        typeof zone.painType !== "string" ||
+        !validPainTypes.includes(zone.painType)
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El tipo de dolor no es válido."
+        );
+      }
+
+      if (
+        typeof zone.frequency !== "string" ||
+        !validFrequencies.includes(zone.frequency)
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "La frecuencia del dolor no es válida."
+        );
+      }
+
+      if (
+        typeof zone.observations !== "string" ||
+        zone.observations.length > 2000
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Las observaciones no son válidas."
+        );
+      }
+
+      return {
+        zoneId: zone.zoneId,
+        zoneName: canonicalZone.name,
+        view: canonicalZone.view,
+        eva: zone.eva,
+        painType: zone.painType,
+        frequency: zone.frequency,
+        observations: zone.observations.trim(),
+      };
+    });
+
+    await assertClinicalPatientAccess(uid, clientId);
+
+    const userRef = db.collection("users").doc(uid);
+    const centerRef = db.collection("centers").doc(CENTER_ID);
+    const clientRef = centerRef.collection("clients").doc(clientId);
+    const episodeRef = clientRef
+      .collection("clinicalEpisodes")
+      .doc(episodeId);
+
+    const assessmentRef = episodeRef
+      .collection("painAssessments")
+      .doc();
+
+    const auditRef = assessmentRef.collection("events").doc();
+    const episodeAuditRef = episodeRef.collection("events").doc();
+
+    await db.runTransaction(async (transaction) => {
+      const [
+        userSnapshot,
+        centerSnapshot,
+        clientSnapshot,
+        episodeSnapshot,
+      ] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(centerRef),
+        transaction.get(clientRef),
+        transaction.get(episodeRef),
+      ]);
+
+      if (
+        !userSnapshot.exists ||
+        !centerSnapshot.exists ||
+        !clientSnapshot.exists ||
+        !episodeSnapshot.exists
+      ) {
+        throw new HttpsError(
+          "not-found",
+          "No se ha encontrado el usuario, centro, paciente o episodio."
+        );
+      }
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+      const clientData = clientSnapshot.data();
+
+      const roles: string[] = Array.isArray(userData?.roles)
+        ? userData.roles
+        : [];
+
+      const isOwner =
+        roles.includes("owner") &&
+        centerData?.ownerActivated === true &&
+        centerData?.ownerUid === uid;
+
+      const isDeveloper =
+        roles.includes("developer") &&
+        clientData?.isTest === true;
+
+      if (
+        userData?.centerId !== CENTER_ID ||
+        (!isOwner && !isDeveloper)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "No tienes permisos para registrar esta valoración."
+        );
+      }
+
+      if (clientData?.deleted === true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "El paciente está en la papelera."
+        );
+      }
+
+      if (episodeSnapshot.data()?.status !== "open") {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se pueden registrar valoraciones en un episodio cerrado."
+        );
+      }
+
+      transaction.create(assessmentRef, {
+        clientId,
+        episodeId,
+        zones,
+        createdBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      transaction.create(auditRef, {
+        type: "created",
+        performedBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      transaction.create(episodeAuditRef, {
+        type: "pain_assessment_created",
+        assessmentId: assessmentRef.id,
+        zoneCount: zones.length,
+        performedBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {
+      success: true,
+      clientId,
+      episodeId,
+      assessmentId: assessmentRef.id,
+    };
+  }
+);
+
+/**
+ * Obtiene el historial de valoraciones del dolor
+ * asociado a un episodio clínico.
+ *
+ * Las valoraciones se devuelven de más reciente
+ * a más antigua.
+ */
+export const getPatientPainAssessments = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+    const input = request.data;
+
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos de consulta no son válidos."
+      );
+    }
+
+    const allowedKeys = ["clientId", "episodeId"];
+
+    if (
+      Object.keys(input).some(
+        (key) => !allowedKeys.includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Se han enviado campos no permitidos."
+      );
+    }
+
+    const validateId = (value: unknown): string => {
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        value.length > 150 ||
+        value.includes("/") ||
+        value.trim() === "." ||
+        value.trim() === ".."
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "El identificador no es válido."
+        );
+      }
+
+      return value.trim();
+    };
+
+    const clientId = validateId(input.clientId);
+    const episodeId = validateId(input.episodeId);
+
+    // Validar permisos clínicos antes de consultar los datos.
+    await assertClinicalPatientAccess(uid, clientId);
+
+    const episodeRef = db
+      .collection("centers")
+      .doc(CENTER_ID)
+      .collection("clients")
+      .doc(clientId)
+      .collection("clinicalEpisodes")
+      .doc(episodeId);
+
+    const episodeSnapshot = await episodeRef.get();
+
+    if (!episodeSnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "El episodio clínico no existe."
+      );
+    }
+
+    const assessmentsSnapshot = await episodeRef
+      .collection("painAssessments")
+      .orderBy("createdAt", "desc")
+      .limit(100)
+      .get();
+
+    const assessments = assessmentsSnapshot.docs.map(
+      (document) => {
+        const data = document.data();
+
+        return {
+          assessmentId: document.id,
+          clientId,
+          episodeId,
+          createdBy:
+            typeof data.createdBy === "string"
+              ? data.createdBy
+              : "",
+          createdAt:
+            data.createdAt instanceof Timestamp
+              ? data.createdAt.toDate().toISOString()
+              : null,
+          zones: Array.isArray(data.zones)
+            ? data.zones
+            : [],
+        };
+      }
+    );
+
+    return {
+      success: true,
+      clientId,
+      episodeId,
+      assessments,
+    };
+  }
+);

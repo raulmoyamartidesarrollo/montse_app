@@ -1,4 +1,4 @@
-import BodyPainMap from '../../components/clinical/BodyPainMap';
+import PatientClinicalPainMap from '../../components/clinical/PatientClinicalPainMap';
 import React, {
   useCallback,
   useEffect,
@@ -53,6 +53,7 @@ type ClinicalTab =
   | 'episodes'
   | 'evolution'
   | 'painMap'
+  | 'painEvolution'
   | 'history';
 
   type ClinicalForm = Pick<
@@ -134,13 +135,18 @@ const tabs: {
 },
   {
     id: 'evolution',
-    label: 'Evolución',
-    icon: 'pulse-outline',
+    label: 'Sesiones',
+    icon: 'clipboard-outline',
   },
   {
     id: 'painMap',
     label: 'Mapa del dolor',
     icon: 'body-outline',
+  },
+  {
+    id: 'painEvolution',
+    label: 'Evolución EVA',
+    icon: 'analytics-outline',
   },
   {
     id: 'history',
@@ -292,7 +298,11 @@ const saveClinicalProfile = async () => {
   }
 };
 const handleCreateEpisode = () => {
+  setSelectedEpisodeId(null);
+  setEditingEpisode(null);
+  setClosingEpisode(null);
   setCreatingEpisode(true);
+  setActiveTab('episodes');
 };
 
 const handleCancelCreateEpisode = () => {
@@ -306,6 +316,20 @@ const handleEpisodeCreated = () => {
 
 const handleSelectEpisode = (episode: ClinicalEpisode) => {
   setSelectedEpisodeId(episode.episodeId);
+};
+
+const handleOpenTreatments = (episode: ClinicalEpisode) => {
+  if (episode.clientId !== clientId) {
+    return;
+  }
+
+  setCreatingEpisode(false);
+  setEditingEpisode(null);
+  setClosingEpisode(null);
+
+  setSelectedEpisodeId(episode.episodeId);
+  setEpisodeDetailRefreshKey((current) => current + 1);
+  setActiveTab('episodes');
 };
 
 const handleBackToEpisodes = () => {
@@ -460,6 +484,7 @@ const handleReopenEpisode = (episode: ClinicalEpisode) => {
           },
         ]}
         showsVerticalScrollIndicator={false}
+        stickyHeaderIndices={[1]}
       >
         <View style={styles.patientCard}>
           <View style={styles.avatar}>
@@ -481,7 +506,13 @@ const handleReopenEpisode = (episode: ClinicalEpisode) => {
           </View>
         </View>
 
-        <View style={styles.tabsContainer}>
+        <View style={styles.stickyTabs}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabsScroll}
+          contentContainerStyle={styles.tabsContainer}
+        >
           {tabs.map((tab) => {
             const selected = activeTab === tab.id;
 
@@ -489,6 +520,8 @@ const handleReopenEpisode = (episode: ClinicalEpisode) => {
               <Pressable
                 key={tab.id}
                 onPress={() => setActiveTab(tab.id)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
                 style={[
                   styles.tab,
                   selected && styles.activeTab,
@@ -515,6 +548,7 @@ const handleReopenEpisode = (episode: ClinicalEpisode) => {
               </Pressable>
             );
           })}
+        </ScrollView>
         </View>
 {activeTab === 'episodes' && (
   closingEpisode ? (
@@ -565,7 +599,23 @@ const handleReopenEpisode = (episode: ClinicalEpisode) => {
 
         {activeTab === 'painMap' && (
           <View style={styles.sectionCard}>
-            <BodyPainMap />
+            <PatientClinicalPainMap
+              key={`map-${clientId}`}
+              clientId={clientId}
+              mode="map"
+              onOpenTreatments={handleOpenTreatments}
+              onCreateEpisode={handleCreateEpisode}
+            />
+          </View>
+        )}
+
+        {activeTab === 'painEvolution' && (
+          <View style={styles.sectionCard}>
+            <PatientClinicalPainMap
+              key={`evolution-${clientId}`}
+              clientId={clientId}
+              mode="evolution"
+            />
           </View>
         )}
 
@@ -764,16 +814,16 @@ const styles = StyleSheet.create({
   },
 
   content: {
-    padding: 18,
+    padding: 12,
   },
 
   patientCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.surface,
-    borderRadius: 18,
-    padding: 18,
-    marginBottom: 20,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: colors.surfaceBorder,
   },
@@ -805,16 +855,29 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
 
-  tabsContainer: {
-    flexDirection: 'row',
+  stickyTabs: {
+    backgroundColor: colors.background,
+    paddingTop: 6,
+    paddingBottom: 10,
+    marginBottom: 10,
+    zIndex: 10,
+  },
+
+  tabsScroll: {
+    marginBottom: 0,
     backgroundColor: colors.surface,
     borderRadius: 14,
+  },
+
+  tabsContainer: {
+    flexDirection: 'row',
+    flexGrow: 1,
     padding: 5,
-    marginBottom: 20,
   },
 
   tab: {
-    flex: 1,
+    flexGrow: 1,
+    minWidth: 78,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 12,
@@ -840,8 +903,8 @@ const styles = StyleSheet.create({
 
   sectionCard: {
     backgroundColor: colors.surface,
-    borderRadius: 18,
-    padding: 20,
+    borderRadius: 14,
+    padding: 10,
     borderWidth: 1,
     borderColor: colors.surfaceBorder,
   },
