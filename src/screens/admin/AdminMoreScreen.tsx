@@ -12,10 +12,12 @@ import { colors } from '../../theme/colors';
 
 type Props = {
   onOpenCenterSettings: () => void;
+  onOpenWeeklySchedule: () => void;
 };
 
 export default function AdminMoreScreen({
   onOpenCenterSettings,
+  onOpenWeeklySchedule,
 }: Props) {
   const insets = useSafeAreaInsets();
 
@@ -58,6 +60,43 @@ export default function AdminMoreScreen({
 
             <Text style={styles.menuDescription}>
               Información, contacto y ubicación
+            </Text>
+          </View>
+
+          <Ionicons
+            name="chevron-forward"
+            size={20}
+            color={colors.textMuted}
+          />
+        </Pressable>
+      </View>
+      {/* HORARIOS Y DISPONIBILIDAD */}
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>
+          HORARIOS Y DISPONIBILIDAD
+        </Text>
+
+        <Pressable
+          style={styles.menuItem}
+          onPress={onOpenWeeklySchedule}
+          accessibilityRole="button"
+        >
+          <View style={styles.iconContainer}>
+            <Ionicons
+              name="time-outline"
+              size={22}
+              color={colors.primary}
+            />
+          </View>
+
+          <View style={styles.menuText}>
+            <Text style={styles.menuTitle}>
+              Horario habitual
+            </Text>
+
+            <Text style={styles.menuDescription}>
+              Horarios semanales de apertura y cierre
             </Text>
           </View>
 
