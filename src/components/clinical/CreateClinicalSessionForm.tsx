@@ -365,14 +365,17 @@ export default function CreateClinicalSessionForm({
                 mode="date"
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 locale={Platform.OS === 'ios' ? 'es-ES' : undefined}
-                onChange={(event, selectedDate) => {
+                onValueChange={(_, selectedDate) => {
                   if (Platform.OS !== 'ios') {
                     setShowDatePicker(false);
                   }
 
-                  if (event.type === 'set' && selectedDate) {
-                    setSessionDate(formatLocalDate(selectedDate));
-                  }
+                  setSessionDate(
+                    formatLocalDate(selectedDate)
+                  );
+                }}
+                onDismiss={() => {
+                  setShowDatePicker(false);
                 }}
               />
 

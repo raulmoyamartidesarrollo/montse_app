@@ -13,12 +13,16 @@ import CenterSocialScreen from '../screens/admin/CenterSocialScreen';
 import CenterAdvancedScreen from '../screens/admin/CenterAdvancedScreen';
 import CenterSessionPackagesScreen from '../screens/admin/CenterSessionPackagesScreen';
 
+import CenterWeeklyScheduleScreen from '../screens/admin/CenterWeeklyScheduleScreen';
+
 import type { CenterSettings } from '../services/centers';
 
 export type AdminMoreStackParamList = {
   MoreHome: undefined;
 
   CenterSettings: undefined;
+
+  CenterWeeklySchedule: undefined;
 
   CenterGeneral: {
     center: CenterSettings;
@@ -61,6 +65,9 @@ export default function AdminMoreNavigator() {
             onOpenCenterSettings={() =>
               navigation.navigate('CenterSettings')
             }
+            onOpenWeeklySchedule={() =>
+              navigation.navigate('CenterWeeklySchedule')
+            }
           />
         )}
       </Stack.Screen>
@@ -68,6 +75,11 @@ export default function AdminMoreNavigator() {
       <Stack.Screen
         name="CenterSettings"
         component={CenterSettingsScreen}
+      />
+
+      <Stack.Screen
+        name="CenterWeeklySchedule"
+        component={CenterWeeklyScheduleScreen}
       />
 
       <Stack.Screen

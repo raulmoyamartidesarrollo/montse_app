@@ -11,6 +11,12 @@ import {
   randomInt,
 } from "node:crypto";
 
+import {
+  createEmptyWeeklySchedule,
+  validateWeeklySchedule,
+  SCHEDULE_TIMEZONE,
+} from "./schedules/weeklySchedule";
+
 initializeApp();
 
 const db = getFirestore("default");
@@ -1505,6 +1511,342 @@ export const getCenterActivationStatus = onCall(
     };
   }
 );
+// ==================================================
+// HORARIOS DEL CENTRO
+// ==================================================
+
+/**
+ * Actualiza el horario semanal del centro.
+ *
+ * Permisos:
+ * - Owner activado.
+ * - Developer autorizado.
+ *
+ * No modifica horarios especiales, vacaciones,
+ * festivos ni citas existentes.
+ */
+export const updateCenterWeeklySchedule = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // --------------------------------------------------
+    // AUTENTICACIÓN
+    // --------------------------------------------------
+
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // --------------------------------------------------
+    // COMPROBAR PERMISOS
+    // --------------------------------------------------
+
+    await assertCenterManagementAccess(uid);
+
+    // --------------------------------------------------
+    // VALIDAR PETICIÓN
+    // --------------------------------------------------
+
+    const payload = request.data;
+
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      Array.isArray(payload)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos del horario no son válidos."
+      );
+    }
+
+    const keys = Object.keys(payload);
+
+    if (
+      keys.length !== 1 ||
+      !Object.prototype.hasOwnProperty.call(
+        payload,
+        "weekly"
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La petición contiene campos no permitidos."
+      );
+    }
+
+    // Validar los siete días, horas y solapamientos.
+    // También ordenar los tramos cronológicamente.
+
+    const weekly = validateWeeklySchedule(
+      payload.weekly
+    );
+
+    // --------------------------------------------------
+    // REFERENCIAS FIRESTORE
+    // --------------------------------------------------
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    // --------------------------------------------------
+    // GUARDAR HORARIO MEDIANTE TRANSACCIÓN
+    // --------------------------------------------------
+
+    await db.runTransaction(async (transaction) => {
+      const [userSnapshot, centerSnapshot] =
+        await Promise.all([
+          transaction.get(userRef),
+          transaction.get(centerRef),
+        ]);
+
+      const userData = userSnapshot.data();
+      const centerData = centerSnapshot.data();
+
+      // Volver a comprobar los permisos dentro
+      // de la transacción.
+
+      validateCenterManagementPermissions(
+        uid,
+        userData,
+        centerData
+      );
+
+      const storedSchedule = centerData?.schedule;
+
+      if (
+        storedSchedule !== undefined &&
+        (
+          typeof storedSchedule !== "object" ||
+          storedSchedule === null ||
+          Array.isArray(storedSchedule)
+        )
+      ) {
+        throw new HttpsError(
+          "failed-precondition",
+          "La configuración de horarios almacenada no es válida."
+        );
+      }
+
+      // Actualizar exclusivamente el horario semanal.
+      // Conservar el resto de la configuración.
+
+      transaction.update(centerRef, {
+        "schedule.weekly": weekly,
+
+        "schedule.weeklyConfigured": true,
+
+        "schedule.weeklyUpdatedAt":
+          FieldValue.serverTimestamp(),
+
+        "schedule.weeklyUpdatedBy": uid,
+
+        updatedAt:
+          FieldValue.serverTimestamp(),
+      });
+    });
+
+    // --------------------------------------------------
+    // RESPUESTA
+    // --------------------------------------------------
+
+    return {
+      success: true,
+    };
+  }
+);
+
+/**
+ * Recupera la configuración del horario semanal.
+ *
+ * Permisos:
+ * - Owner activado.
+ * - Developer autorizado.
+ *
+ * No realiza escrituras en Firestore.
+ */
+export const getCenterSchedule = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // --------------------------------------------------
+    // AUTENTICACIÓN
+    // --------------------------------------------------
+
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // --------------------------------------------------
+    // VALIDAR PETICIÓN
+    // --------------------------------------------------
+
+    const payload = request.data;
+
+    if (
+      payload !== undefined &&
+      payload !== null &&
+      (
+        typeof payload !== "object" ||
+        Array.isArray(payload) ||
+        Object.keys(payload).length > 0
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La consulta contiene parámetros no permitidos."
+      );
+    }
+
+    // --------------------------------------------------
+    // COMPROBAR CUENTA
+    // --------------------------------------------------
+
+    const userRecord = await getAuth().getUser(uid);
+
+    if (userRecord.disabled) {
+      throw new HttpsError(
+        "permission-denied",
+        "La cuenta está deshabilitada."
+      );
+    }
+
+    // --------------------------------------------------
+    // RECUPERAR USUARIO Y CENTRO
+    // --------------------------------------------------
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const [userSnapshot, centerSnapshot] =
+      await Promise.all([
+        userRef.get(),
+        centerRef.get(),
+      ]);
+
+    const userData = userSnapshot.data();
+    const centerData = centerSnapshot.data();
+
+    validateCenterManagementPermissions(
+      uid,
+      userData,
+      centerData
+    );
+
+    // --------------------------------------------------
+    // RECUPERAR CONFIGURACIÓN
+    // --------------------------------------------------
+
+    const storedSchedule = centerData?.schedule;
+
+    if (
+      storedSchedule !== undefined &&
+      (
+        typeof storedSchedule !== "object" ||
+        storedSchedule === null ||
+        Array.isArray(storedSchedule)
+      )
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "La configuración de horarios almacenada no es válida."
+      );
+    }
+
+    const configuredFlag =
+      storedSchedule?.weeklyConfigured;
+
+    if (
+      configuredFlag !== undefined &&
+      typeof configuredFlag !== "boolean"
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "El estado del horario semanal no es válido."
+      );
+    }
+
+    const weeklyConfigured =
+      configuredFlag === true;
+
+    let weekly = createEmptyWeeklySchedule();
+
+    // --------------------------------------------------
+    // VALIDAR HORARIO ALMACENADO
+    // --------------------------------------------------
+
+    if (weeklyConfigured) {
+      try {
+        weekly = validateWeeklySchedule(
+          storedSchedule?.weekly
+        );
+      } catch (error) {
+        console.error(
+          "[getCenterSchedule] Horario almacenado no válido:",
+          error
+        );
+
+        throw new HttpsError(
+          "failed-precondition",
+          "El horario semanal almacenado no es válido."
+        );
+      }
+    } else if (storedSchedule?.weekly !== undefined) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Existe un horario semanal sin un estado de configuración válido."
+      );
+    }
+
+    // --------------------------------------------------
+    // RESPUESTA
+    // --------------------------------------------------
+
+    return {
+      success: true,
+
+      schedule: {
+        timezone: SCHEDULE_TIMEZONE,
+
+        weeklyConfigured,
+
+        weekly,
+
+        updatedAt:
+          storedSchedule?.weeklyUpdatedAt instanceof Timestamp
+            ? storedSchedule.weeklyUpdatedAt
+                .toDate()
+                .toISOString()
+            : null,
+      },
+    };
+  }
+);
+
 /**
  * Obtiene la configuración del centro.
  *
