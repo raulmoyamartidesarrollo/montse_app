@@ -14,6 +14,12 @@ import CenterAdvancedScreen from '../screens/admin/CenterAdvancedScreen';
 import CenterSessionPackagesScreen from '../screens/admin/CenterSessionPackagesScreen';
 
 import CenterWeeklyScheduleScreen from '../screens/admin/CenterWeeklyScheduleScreen';
+import CenterSpecialSchedulesScreen from '../screens/admin/CenterSpecialSchedulesScreen';
+import CenterSpecialScheduleFormScreen from '../screens/admin/CenterSpecialScheduleFormScreen';
+
+import type {
+  CenterSpecialSchedule,
+} from '../types/centerSpecialSchedules';
 
 import type { CenterSettings } from '../services/centers';
 
@@ -23,6 +29,12 @@ export type AdminMoreStackParamList = {
   CenterSettings: undefined;
 
   CenterWeeklySchedule: undefined;
+
+  CenterSpecialSchedules: undefined;
+
+  CenterSpecialScheduleForm: {
+    schedule?: CenterSpecialSchedule;
+  } | undefined;
 
   CenterGeneral: {
     center: CenterSettings;
@@ -68,6 +80,9 @@ export default function AdminMoreNavigator() {
             onOpenWeeklySchedule={() =>
               navigation.navigate('CenterWeeklySchedule')
             }
+            onOpenSpecialSchedules={() =>
+              navigation.navigate('CenterSpecialSchedules')
+            }
           />
         )}
       </Stack.Screen>
@@ -80,6 +95,16 @@ export default function AdminMoreNavigator() {
       <Stack.Screen
         name="CenterWeeklySchedule"
         component={CenterWeeklyScheduleScreen}
+      />
+
+      <Stack.Screen
+        name="CenterSpecialSchedules"
+        component={CenterSpecialSchedulesScreen}
+      />
+
+      <Stack.Screen
+        name="CenterSpecialScheduleForm"
+        component={CenterSpecialScheduleFormScreen}
       />
 
       <Stack.Screen

@@ -3,6 +3,7 @@ import { initializeApp } from "firebase-admin/app";
 import {
   getFirestore,
   FieldValue,
+  FieldPath,
   Timestamp,
 } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
@@ -16,6 +17,13 @@ import {
   validateWeeklySchedule,
   SCHEDULE_TIMEZONE,
 } from "./schedules/weeklySchedule";
+
+import {
+  validateSpecialScheduleInput,
+  validateSpecialScheduleDateInput,
+  validateSpecialScheduleQuery,
+} from "./schedules/specialSchedule";
+
 
 initializeApp();
 
@@ -7112,6 +7120,619 @@ export const getPatientPainAssessments = onCall(
       clientId,
       episodeId,
       assessments,
+    };
+  }
+);
+
+// ==================================================
+// CONSULTAR HORARIOS ESPECIALES DEL CENTRO
+// ==================================================
+
+/**
+ * Recupera los horarios especiales del centro.
+ *
+ * Permite filtrar por fechas y paginar los resultados.
+ *
+ * No realiza escrituras en Firestore.
+ */
+export const getCenterSpecialSchedules = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // --------------------------------------------------
+    // AUTENTICACIÓN
+    // --------------------------------------------------
+
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // --------------------------------------------------
+    // COMPROBAR PERMISOS
+    // --------------------------------------------------
+
+    await assertCenterManagementAccess(uid);
+
+    // --------------------------------------------------
+    // VALIDAR PETICIÓN
+    // --------------------------------------------------
+
+    const filters = validateSpecialScheduleQuery(
+      request.data
+    );
+
+    // --------------------------------------------------
+    // REFERENCIA FIRESTORE
+    // --------------------------------------------------
+
+    const collectionRef = db
+      .collection("centers")
+      .doc(CENTER_ID)
+      .collection("specialSchedules");
+
+    let query: FirebaseFirestore.Query =
+      collectionRef.orderBy(FieldPath.documentId(), "asc");
+
+    // --------------------------------------------------
+    // FILTRAR POR FECHAS
+    // --------------------------------------------------
+
+    if (filters.fromDateISO !== undefined) {
+      query = query.where(
+        FieldPath.documentId(),
+        ">=",
+        filters.fromDateISO
+      );
+    }
+
+    if (filters.toDateISO !== undefined) {
+      query = query.where(
+        FieldPath.documentId(),
+        "<=",
+        filters.toDateISO
+      );
+    }
+
+    // --------------------------------------------------
+    // PAGINACIÓN
+    // --------------------------------------------------
+
+    if (filters.cursorDateISO !== undefined) {
+      query = query.startAfter(
+        filters.cursorDateISO
+      );
+    }
+
+    // Recuperar un documento adicional para comprobar
+    // si existen más resultados.
+
+    const snapshot = await query
+      .limit(filters.limit + 1)
+      .get();
+
+    const hasMore =
+      snapshot.docs.length > filters.limit;
+
+    const documents = snapshot.docs.slice(
+      0,
+      filters.limit
+    );
+
+    // --------------------------------------------------
+    // VALIDAR Y SERIALIZAR DOCUMENTOS
+    // --------------------------------------------------
+
+    const specialSchedules = documents.map(
+      (document) => {
+        const data = document.data();
+
+        try {
+          const schedule =
+            validateSpecialScheduleInput({
+              dateISO: data.dateISO,
+              closed: data.closed,
+              periods: data.periods,
+              reason: data.reason,
+            });
+
+          // La fecha debe coincidir con el ID.
+
+          if (schedule.dateISO !== document.id) {
+            throw new Error(
+              "La fecha no coincide con el identificador."
+            );
+          }
+
+          // Validar campos de auditoría.
+
+          if (
+            typeof data.createdBy !== "string" ||
+            data.createdBy.trim().length === 0 ||
+            typeof data.updatedBy !== "string" ||
+            data.updatedBy.trim().length === 0
+          ) {
+            throw new Error(
+              "Los campos de auditoría no son válidos."
+            );
+          }
+
+          if (
+            !(data.createdAt instanceof Timestamp) ||
+            !(data.updatedAt instanceof Timestamp)
+          ) {
+            throw new Error(
+              "Las fechas de auditoría no son válidas."
+            );
+          }
+
+          return {
+            ...schedule,
+
+            createdAt: data.createdAt
+              .toDate()
+              .toISOString(),
+
+            createdBy: data.createdBy,
+
+            updatedAt: data.updatedAt
+              .toDate()
+              .toISOString(),
+
+            updatedBy: data.updatedBy,
+          };
+        } catch (error) {
+          console.error(
+            "[getCenterSpecialSchedules] Documento no válido:",
+            document.id,
+            error
+          );
+
+          throw new HttpsError(
+            "failed-precondition",
+            "Existe un horario especial almacenado que no es válido."
+          );
+        }
+      }
+    );
+
+    // --------------------------------------------------
+    // CURSOR DE LA SIGUIENTE PÁGINA
+    // --------------------------------------------------
+
+    const nextCursorDateISO =
+      hasMore && documents.length > 0
+        ? documents[documents.length - 1].id
+        : null;
+
+    // --------------------------------------------------
+    // RESPUESTA
+    // --------------------------------------------------
+
+    return {
+      success: true,
+      specialSchedules,
+      hasMore,
+      nextCursorDateISO,
+    };
+  }
+);
+
+// ==================================================
+// CREAR HORARIO ESPECIAL DEL CENTRO
+// ==================================================
+
+/**
+ * Crea una excepción al horario habitual del centro.
+ *
+ * Solo puede existir un horario especial por fecha.
+ * La creación se realiza mediante una transacción.
+ */
+export const createCenterSpecialSchedule = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // --------------------------------------------------
+    // AUTENTICACIÓN
+    // --------------------------------------------------
+
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // --------------------------------------------------
+    // COMPROBAR PERMISOS
+    // --------------------------------------------------
+
+    await assertCenterManagementAccess(uid);
+
+    // --------------------------------------------------
+    // VALIDAR PETICIÓN
+    // --------------------------------------------------
+
+    const schedule = validateSpecialScheduleInput(
+      request.data
+    );
+
+    // --------------------------------------------------
+    // REFERENCIAS FIRESTORE
+    // --------------------------------------------------
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const specialScheduleRef = centerRef
+      .collection("specialSchedules")
+      .doc(schedule.dateISO);
+
+    // --------------------------------------------------
+    // CREAR MEDIANTE TRANSACCIÓN
+    // --------------------------------------------------
+
+    await db.runTransaction(async (transaction) => {
+      const [
+        userSnapshot,
+        centerSnapshot,
+        specialScheduleSnapshot,
+      ] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(centerRef),
+        transaction.get(specialScheduleRef),
+      ]);
+
+      // Volver a comprobar los permisos dentro
+      // de la transacción.
+
+      validateCenterManagementPermissions(
+        uid,
+        userSnapshot.data(),
+        centerSnapshot.data()
+      );
+
+      // Impedir horarios especiales duplicados.
+
+      if (specialScheduleSnapshot.exists) {
+        throw new HttpsError(
+          "already-exists",
+          "Ya existe un horario especial para esta fecha."
+        );
+      }
+
+      // Crear el documento sin sobrescribir
+      // ningún horario existente.
+
+      transaction.create(specialScheduleRef, {
+        dateISO: schedule.dateISO,
+
+        closed: schedule.closed,
+
+        periods: schedule.periods,
+
+        reason: schedule.reason,
+
+        createdAt:
+          FieldValue.serverTimestamp(),
+
+        createdBy: uid,
+
+        updatedAt:
+          FieldValue.serverTimestamp(),
+
+        updatedBy: uid,
+      });
+    });
+
+    // --------------------------------------------------
+    // RESPUESTA
+    // --------------------------------------------------
+
+    return {
+      success: true,
+      dateISO: schedule.dateISO,
+    };
+  }
+);
+
+// ==================================================
+// ACTUALIZAR HORARIO ESPECIAL DEL CENTRO
+// ==================================================
+
+/**
+ * Actualiza un horario especial existente.
+ *
+ * La fecha identifica el documento y no se modifica.
+ * Se conservan los campos originales de creación.
+ */
+export const updateCenterSpecialSchedule = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // --------------------------------------------------
+    // AUTENTICACIÓN
+    // --------------------------------------------------
+
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // --------------------------------------------------
+    // COMPROBAR PERMISOS
+    // --------------------------------------------------
+
+    await assertCenterManagementAccess(uid);
+
+    // --------------------------------------------------
+    // VALIDAR PETICIÓN
+    // --------------------------------------------------
+
+    const schedule = validateSpecialScheduleInput(
+      request.data
+    );
+
+    // --------------------------------------------------
+    // REFERENCIAS FIRESTORE
+    // --------------------------------------------------
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const specialScheduleRef = centerRef
+      .collection("specialSchedules")
+      .doc(schedule.dateISO);
+
+    // --------------------------------------------------
+    // ACTUALIZAR MEDIANTE TRANSACCIÓN
+    // --------------------------------------------------
+
+    await db.runTransaction(async (transaction) => {
+      const [
+        userSnapshot,
+        centerSnapshot,
+        specialScheduleSnapshot,
+      ] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(centerRef),
+        transaction.get(specialScheduleRef),
+      ]);
+
+      // Volver a comprobar los permisos dentro
+      // de la transacción.
+
+      validateCenterManagementPermissions(
+        uid,
+        userSnapshot.data(),
+        centerSnapshot.data()
+      );
+
+      // Comprobar que existe el horario especial.
+
+      if (!specialScheduleSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "No existe un horario especial para esta fecha."
+        );
+      }
+
+      const storedSchedule =
+        specialScheduleSnapshot.data();
+
+      // --------------------------------------------------
+      // VALIDAR IDENTIDAD Y AUDITORÍA DEL DOCUMENTO
+      // --------------------------------------------------
+
+      if (
+        !storedSchedule ||
+        storedSchedule.dateISO !== schedule.dateISO ||
+        !(storedSchedule.createdAt instanceof Timestamp) ||
+        typeof storedSchedule.createdBy !== "string" ||
+        storedSchedule.createdBy.trim().length === 0
+      ) {
+        throw new HttpsError(
+          "failed-precondition",
+          "El horario especial almacenado no es válido."
+        );
+      }
+
+      // --------------------------------------------------
+      // ACTUALIZAR CAMPOS EDITABLES
+      // --------------------------------------------------
+
+      transaction.update(specialScheduleRef, {
+        closed: schedule.closed,
+
+        periods: schedule.periods,
+
+        reason: schedule.reason,
+
+        updatedAt:
+          FieldValue.serverTimestamp(),
+
+        updatedBy: uid,
+      });
+    });
+
+    // --------------------------------------------------
+    // RESPUESTA
+    // --------------------------------------------------
+
+    return {
+      success: true,
+      dateISO: schedule.dateISO,
+    };
+  }
+);
+
+// ==================================================
+// ELIMINAR HORARIO ESPECIAL DEL CENTRO
+// ==================================================
+
+/**
+ * Elimina un horario especial existente.
+ *
+ * Conserva un registro de auditoría independiente.
+ * No modifica el horario habitual ni las citas.
+ */
+export const deleteCenterSpecialSchedule = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // --------------------------------------------------
+    // AUTENTICACIÓN
+    // --------------------------------------------------
+
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // --------------------------------------------------
+    // COMPROBAR PERMISOS
+    // --------------------------------------------------
+
+    await assertCenterManagementAccess(uid);
+
+    // --------------------------------------------------
+    // VALIDAR PETICIÓN
+    // --------------------------------------------------
+
+    const { dateISO } =
+      validateSpecialScheduleDateInput(
+        request.data
+      );
+
+    // --------------------------------------------------
+    // REFERENCIAS FIRESTORE
+    // --------------------------------------------------
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const specialScheduleRef = centerRef
+      .collection("specialSchedules")
+      .doc(dateISO);
+
+    const deletionLogRef = centerRef
+      .collection("specialScheduleDeletionLogs")
+      .doc();
+
+    // --------------------------------------------------
+    // ELIMINAR MEDIANTE TRANSACCIÓN
+    // --------------------------------------------------
+
+    await db.runTransaction(async (transaction) => {
+      const [
+        userSnapshot,
+        centerSnapshot,
+        specialScheduleSnapshot,
+      ] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(centerRef),
+        transaction.get(specialScheduleRef),
+      ]);
+
+      // Volver a comprobar los permisos dentro
+      // de la transacción.
+
+      validateCenterManagementPermissions(
+        uid,
+        userSnapshot.data(),
+        centerSnapshot.data()
+      );
+
+      // Comprobar que existe el horario especial.
+
+      if (!specialScheduleSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "No existe un horario especial para esta fecha."
+        );
+      }
+
+      const storedSchedule =
+        specialScheduleSnapshot.data();
+
+      // Comprobar la identidad del documento.
+
+      if (
+        !storedSchedule ||
+        storedSchedule.dateISO !== dateISO
+      ) {
+        throw new HttpsError(
+          "failed-precondition",
+          "El horario especial almacenado no es válido."
+        );
+      }
+
+      // --------------------------------------------------
+      // REGISTRAR AUDITORÍA DE ELIMINACIÓN
+      // --------------------------------------------------
+
+      transaction.create(deletionLogRef, {
+        dateISO,
+
+        previousSchedule: storedSchedule,
+
+        deletedAt:
+          FieldValue.serverTimestamp(),
+
+        deletedBy: uid,
+      });
+
+      // --------------------------------------------------
+      // ELIMINAR HORARIO ESPECIAL
+      // --------------------------------------------------
+
+      transaction.delete(specialScheduleRef);
+    });
+
+    // --------------------------------------------------
+    // RESPUESTA
+    // --------------------------------------------------
+
+    return {
+      success: true,
+      dateISO,
     };
   }
 );

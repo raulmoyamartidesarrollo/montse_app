@@ -290,3 +290,29 @@ test("28 - Conversión de hora incorrecta", () => {
     (error) => error.code === "invalid-argument"
   );
 });
+
+test("29 - Validación estricta del formato HH:mm", () => {
+  const cases = [
+    ["09:00", true],
+    ["00:00", true],
+    ["23:59", true],
+    ["24:00", false],
+    ["9:00", false],
+    ["09:60", false],
+    ["09:00 ", false],
+    [" 09:00", false],
+    ["09:00\n", false],
+    ["09:00\r\n", false],
+    ["09:00:00", false],
+    [null, false],
+    [900, false],
+  ];
+
+  for (const [value, expected] of cases) {
+    assert.equal(
+      isValidScheduleTime(value),
+      expected,
+      `Formato incorrecto: ${JSON.stringify(value)}`
+    );
+  }
+});

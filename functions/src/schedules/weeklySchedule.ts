@@ -93,6 +93,7 @@ export function isValidScheduleTime(
 ): value is string {
   return (
     typeof value === "string" &&
+    value.length === 5 &&
     /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(value)
   );
 }
