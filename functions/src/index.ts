@@ -16,6 +16,89 @@ initializeApp();
 const db = getFirestore("default");
 
 const CENTER_ID = "montse-main";
+
+
+/**
+ * Comprueba los permisos de administración del centro.
+ *
+ * Owner: propietaria activada y vinculada al centro.
+ * Developer: desarrollador autorizado del centro.
+ */
+function validateCenterManagementPermissions(
+  uid: string,
+  userData: FirebaseFirestore.DocumentData | undefined,
+  centerData: FirebaseFirestore.DocumentData | undefined
+): void {
+  if (!userData || !centerData) {
+    throw new HttpsError(
+      "failed-precondition",
+      "No se ha encontrado el usuario o el centro."
+    );
+  }
+
+  const roles: string[] = Array.isArray(userData.roles)
+    ? userData.roles
+    : [];
+
+  const isOwner =
+    roles.includes("owner") &&
+    centerData.ownerActivated === true &&
+    centerData.ownerUid === uid;
+
+  const isDeveloper =
+    roles.includes("developer");
+
+  if (
+    userData.centerId !== CENTER_ID ||
+    (!isOwner && !isDeveloper)
+  ) {
+    throw new HttpsError(
+      "permission-denied",
+      "No tienes permisos para gestionar este centro."
+    );
+  }
+}
+
+/**
+ * Comprueba el acceso administrativo al centro.
+ *
+ * Las operaciones de escritura deberán volver a validar
+ * los permisos dentro de su propia transacción.
+ */
+async function assertCenterManagementAccess(
+  uid: string
+): Promise<void> {
+  const userRecord = await getAuth().getUser(uid);
+
+  if (userRecord.disabled) {
+    throw new HttpsError(
+      "permission-denied",
+      "La cuenta está deshabilitada."
+    );
+  }
+
+  const userRef = db
+    .collection("users")
+    .doc(uid);
+
+  const centerRef = db
+    .collection("centers")
+    .doc(CENTER_ID);
+
+  const [userSnapshot, centerSnapshot] =
+    await Promise.all([
+      userRef.get(),
+      centerRef.get(),
+    ]);
+
+  validateCenterManagementPermissions(
+    uid,
+    userSnapshot.data(),
+    centerSnapshot.data()
+  );
+}
+
+
 /**
  * Comprueba si un usuario puede acceder a los datos clínicos
  * de un paciente.
@@ -94,6 +177,747 @@ async function assertClinicalPatientAccess(
     );
   }
 }
+
+// ==================================================
+// GESTIÓN DE SERVICIOS DEL CENTRO
+// ==================================================
+
+interface CenterServiceInput {
+  name: string;
+  description: string;
+  priceCents: number;
+  durationMinutes: number;
+  active: boolean;
+}
+
+/**
+ * Valida y normaliza los datos de un servicio.
+ *
+ * Utilizada tanto para crear como para editar servicios.
+ */
+function validateCenterServiceInput(
+  payload: unknown
+): CenterServiceInput {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Los datos del servicio no son válidos."
+    );
+  }
+
+  const input = payload as Record<string, unknown>;
+
+  const allowedKeys = [
+    "name",
+    "description",
+    "priceCents",
+    "durationMinutes",
+    "active",
+  ];
+
+  if (
+    Object.keys(input).some(
+      (key) => !allowedKeys.includes(key)
+    )
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "El servicio contiene campos no permitidos."
+    );
+  }
+
+  // Nombre del servicio.
+  if (
+    typeof input.name !== "string" ||
+    input.name.trim().length === 0 ||
+    input.name.length > 120
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Introduce un nombre de servicio válido."
+    );
+  }
+
+  const name = input.name.trim();
+
+  // Descripción opcional.
+  const rawDescription =
+    input.description === undefined
+      ? ""
+      : input.description;
+
+  if (
+    typeof rawDescription !== "string" ||
+    rawDescription.length > 1000
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "La descripción no puede superar los 1000 caracteres."
+    );
+  }
+
+  const description = rawDescription.trim();
+
+  // Precio expresado en céntimos.
+  const priceCents = input.priceCents;
+
+  if (
+    typeof priceCents !== "number" ||
+    !Number.isSafeInteger(priceCents) ||
+    priceCents < 0 ||
+    priceCents > 1000000
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "El precio del servicio no es válido."
+    );
+  }
+
+  // Duración expresada en minutos.
+  const durationMinutes = input.durationMinutes;
+
+  if (
+    typeof durationMinutes !== "number" ||
+    !Number.isInteger(durationMinutes) ||
+    durationMinutes < 5 ||
+    durationMinutes > 480
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "La duración debe estar entre 5 y 480 minutos."
+    );
+  }
+
+  // Estado del servicio.
+  if (typeof input.active !== "boolean") {
+    throw new HttpsError(
+      "invalid-argument",
+      "El estado del servicio no es válido."
+    );
+  }
+
+  return {
+    name,
+    description,
+    priceCents,
+    durationMinutes,
+    active: input.active,
+  };
+}
+
+/**
+ * Valida el identificador de un servicio.
+ */
+function validateCenterServiceId(
+  value: unknown
+): string {
+  if (
+    typeof value !== "string" ||
+    !/^[a-zA-Z0-9_-]{1,128}$/.test(value)
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "El identificador del servicio no es válido."
+    );
+  }
+
+  return value;
+}
+
+
+/**
+ * Recupera los servicios del centro.
+ *
+ * Permisos:
+ * - Owner activado.
+ * - Developer autorizado.
+ *
+ * Devuelve servicios activos e inactivos.
+ * Excluye los servicios eliminados.
+ */
+export const getCenterServices = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    await assertCenterManagementAccess(uid);
+
+    // Esta función no admite parámetros.
+    const payload = request.data;
+
+    if (
+      payload !== undefined &&
+      payload !== null &&
+      (
+        typeof payload !== "object" ||
+        Array.isArray(payload) ||
+        Object.keys(payload).length > 0
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La consulta contiene parámetros no permitidos."
+      );
+    }
+
+    const servicesSnapshot = await db
+      .collection("centers")
+      .doc(CENTER_ID)
+      .collection("services")
+      .get();
+
+    const services = servicesSnapshot.docs
+      .filter((document) => {
+        return document.data().deleted !== true;
+      })
+      .map((document) => {
+        const data = document.data();
+
+        return {
+          serviceId: document.id,
+
+          name:
+            typeof data.name === "string"
+              ? data.name
+              : "",
+
+          description:
+            typeof data.description === "string"
+              ? data.description
+              : "",
+
+          priceCents:
+            typeof data.priceCents === "number" &&
+            Number.isSafeInteger(data.priceCents) &&
+            data.priceCents >= 0 &&
+            data.priceCents <= 1000000
+              ? data.priceCents
+              : null,
+
+          currency: "EUR",
+
+          durationMinutes:
+            typeof data.durationMinutes === "number" &&
+            Number.isInteger(data.durationMinutes) &&
+            data.durationMinutes >= 5 &&
+            data.durationMinutes <= 480
+              ? data.durationMinutes
+              : null,
+
+          active: data.active === true,
+
+          createdAt:
+            data.createdAt instanceof Timestamp
+              ? data.createdAt.toDate().toISOString()
+              : null,
+
+          updatedAt:
+            data.updatedAt instanceof Timestamp
+              ? data.updatedAt.toDate().toISOString()
+              : null,
+        };
+      });
+
+    // Mostrar primero los servicios activos.
+    // Dentro de cada grupo, ordenar por nombre.
+    services.sort((first, second) => {
+      if (first.active !== second.active) {
+        return first.active ? -1 : 1;
+      }
+
+      return (
+        first.name.localeCompare(second.name, "es") ||
+        first.serviceId.localeCompare(second.serviceId)
+      );
+    });
+
+    return {
+      success: true,
+      services,
+    };
+  }
+);
+
+
+/**
+ * Crea un nuevo servicio del centro.
+ *
+ * Permisos:
+ * - Owner activado.
+ * - Developer autorizado.
+ *
+ * Los campos internos y de auditoría se generan
+ * exclusivamente desde el servidor.
+ */
+export const createCenterService = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // Comprobar permisos administrativos.
+    await assertCenterManagementAccess(uid);
+
+    // Validar y normalizar los datos recibidos.
+    const service = validateCenterServiceInput(
+      request.data
+    );
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const serviceRef = centerRef
+      .collection("services")
+      .doc();
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot =
+        await transaction.get(userRef);
+
+      const centerSnapshot =
+        await transaction.get(centerRef);
+
+      // Volver a comprobar los permisos dentro
+      // de la transacción de escritura.
+      validateCenterManagementPermissions(
+        uid,
+        userSnapshot.data(),
+        centerSnapshot.data()
+      );
+
+      transaction.create(serviceRef, {
+        name: service.name,
+        description: service.description,
+        priceCents: service.priceCents,
+        currency: "EUR",
+        durationMinutes: service.durationMinutes,
+        active: service.active,
+
+        // Eliminación lógica.
+        deleted: false,
+        deletedAt: null,
+        deletedBy: null,
+
+        // Auditoría.
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        createdBy: uid,
+        updatedBy: uid,
+      });
+    });
+
+    return {
+      success: true,
+      serviceId: serviceRef.id,
+    };
+  }
+);
+
+
+/**
+ * Actualiza un servicio existente del centro.
+ *
+ * Conserva los datos originales de creación.
+ * No permite modificar servicios eliminados.
+ */
+export const updateCenterService = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    await assertCenterManagementAccess(uid);
+
+    const payload = request.data;
+
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos del servicio no son válidos."
+      );
+    }
+
+    const input = payload as Record<string, unknown>;
+
+    const {
+      serviceId: rawServiceId,
+      ...serviceInput
+    } = input;
+
+    const serviceId = validateCenterServiceId(
+      rawServiceId
+    );
+
+    const service = validateCenterServiceInput(
+      serviceInput
+    );
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const serviceRef = centerRef
+      .collection("services")
+      .doc(serviceId);
+
+    await db.runTransaction(async (transaction) => {
+      const userSnapshot =
+        await transaction.get(userRef);
+
+      const centerSnapshot =
+        await transaction.get(centerRef);
+
+      validateCenterManagementPermissions(
+        uid,
+        userSnapshot.data(),
+        centerSnapshot.data()
+      );
+
+      const serviceSnapshot =
+        await transaction.get(serviceRef);
+
+      if (!serviceSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "No se ha encontrado el servicio."
+        );
+      }
+
+      const currentService = serviceSnapshot.data();
+
+      if (currentService?.deleted === true) {
+        throw new HttpsError(
+          "failed-precondition",
+          "No se puede modificar un servicio eliminado."
+        );
+      }
+
+      transaction.update(serviceRef, {
+        name: service.name,
+        description: service.description,
+        priceCents: service.priceCents,
+        currency: "EUR",
+        durationMinutes: service.durationMinutes,
+        active: service.active,
+
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: uid,
+      });
+    });
+
+    return {
+      success: true,
+      serviceId,
+    };
+  }
+);
+
+
+/**
+ * Activa o desactiva un servicio del centro.
+ *
+ * No modifica el nombre, precio ni duración.
+ * No permite reactivar servicios eliminados.
+ */
+export const setCenterServiceStatus = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    await assertCenterManagementAccess(uid);
+
+    const payload = request.data;
+
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos recibidos no son válidos."
+      );
+    }
+
+    const input = payload as Record<string, unknown>;
+
+    const allowedKeys = [
+      "serviceId",
+      "active",
+    ];
+
+    if (
+      Object.keys(input).some(
+        (key) => !allowedKeys.includes(key)
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La solicitud contiene campos no permitidos."
+      );
+    }
+
+    const serviceId = validateCenterServiceId(
+      input.serviceId
+    );
+
+    if (typeof input.active !== "boolean") {
+      throw new HttpsError(
+        "invalid-argument",
+        "El estado del servicio no es válido."
+      );
+    }
+
+    const active = input.active;
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const serviceRef = centerRef
+      .collection("services")
+      .doc(serviceId);
+
+    const changed = await db.runTransaction(
+      async (transaction) => {
+        const userSnapshot =
+          await transaction.get(userRef);
+
+        const centerSnapshot =
+          await transaction.get(centerRef);
+
+        validateCenterManagementPermissions(
+          uid,
+          userSnapshot.data(),
+          centerSnapshot.data()
+        );
+
+        const serviceSnapshot =
+          await transaction.get(serviceRef);
+
+        if (!serviceSnapshot.exists) {
+          throw new HttpsError(
+            "not-found",
+            "No se ha encontrado el servicio."
+          );
+        }
+
+        const serviceData = serviceSnapshot.data();
+
+        if (serviceData?.deleted === true) {
+          throw new HttpsError(
+            "failed-precondition",
+            "No se puede cambiar el estado de un servicio eliminado."
+          );
+        }
+
+        // Evitar escrituras innecesarias.
+        if (serviceData?.active === active) {
+          return false;
+        }
+
+        transaction.update(serviceRef, {
+          active,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: uid,
+        });
+
+        return true;
+      }
+    );
+
+    return {
+      success: true,
+      serviceId,
+      active,
+      changed,
+    };
+  }
+);
+
+
+/**
+ * Elimina lógicamente un servicio del centro.
+ *
+ * Conserva sus datos originales para mantener
+ * la integridad de las futuras reservas e históricos.
+ *
+ * No elimina físicamente el documento de Firestore.
+ */
+export const deleteCenterService = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    await assertCenterManagementAccess(uid);
+
+    const payload = request.data;
+
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Los datos recibidos no son válidos."
+      );
+    }
+
+    const input = payload as Record<string, unknown>;
+
+    if (
+      Object.keys(input).some(
+        (key) => key !== "serviceId"
+      )
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "La solicitud contiene campos no permitidos."
+      );
+    }
+
+    const serviceId = validateCenterServiceId(
+      input.serviceId
+    );
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const serviceRef = centerRef
+      .collection("services")
+      .doc(serviceId);
+
+    const changed = await db.runTransaction(
+      async (transaction) => {
+        const userSnapshot =
+          await transaction.get(userRef);
+
+        const centerSnapshot =
+          await transaction.get(centerRef);
+
+        validateCenterManagementPermissions(
+          uid,
+          userSnapshot.data(),
+          centerSnapshot.data()
+        );
+
+        const serviceSnapshot =
+          await transaction.get(serviceRef);
+
+        if (!serviceSnapshot.exists) {
+          throw new HttpsError(
+            "not-found",
+            "No se ha encontrado el servicio."
+          );
+        }
+
+        const serviceData = serviceSnapshot.data();
+
+        // Si ya está eliminado, no modificar
+        // los datos originales de eliminación.
+        if (serviceData?.deleted === true) {
+          return false;
+        }
+
+        transaction.update(serviceRef, {
+          active: false,
+          deleted: true,
+
+          deletedAt: FieldValue.serverTimestamp(),
+          deletedBy: uid,
+
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: uid,
+        });
+
+        return true;
+      }
+    );
+
+    return {
+      success: true,
+      serviceId,
+      deleted: true,
+      changed,
+    };
+  }
+);
+
 const MAX_ATTEMPTS = 5;
 const ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
 // Los códigos de vinculación caducan a los 7 días.

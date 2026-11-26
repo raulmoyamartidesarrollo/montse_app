@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { TabActions } from '@react-navigation/native';
-import { getClinicalNavigationGuard } from './ClinicalNavigationGuard';
+import { getAdminNavigationGuard } from './AdminNavigationGuard';
 import {
   View,
   Text,
@@ -19,6 +19,7 @@ import { colors } from '../theme/colors';
 import AdminHomeScreen from '../screens/admin/AdminHomeScreen';
 import AdminMoreNavigator from './AdminMoreNavigator';
 import AdminPatientsNavigator from './AdminPatientsNavigator';
+import AdminServicesNavigator from './AdminServicesNavigator';
 
 type AdminTabParamList = {
   Inicio: undefined;
@@ -55,9 +56,7 @@ const AgendaScreen = () => (
 
 
 
-const ServicesScreen = () => (
-  <PlaceholderScreen title="Servicios" />
-);
+
 
 const MoreScreen = () => (
   <PlaceholderScreen title="Más opciones" />
@@ -100,15 +99,15 @@ export default function AdminNavigator() {
       initialRouteName="Inicio"
       screenListeners={({ navigation, route }) => ({
         tabPress: (event) => {
-          const guard = getClinicalNavigationGuard();
+          const guard = getAdminNavigationGuard();
 
           if (!guard || !guard.shouldPreventNavigation()) {
             return;
           }
 
-          // El retroceso dentro de Pacientes continúa
-          // protegido mediante usePreventRemove.
-          if (route.name === 'Pacientes') {
+          // La navegación dentro de la propia sección
+          // continúa protegida mediante usePreventRemove.
+          if (route.name === guard.sourceTab) {
             return;
           }
 
@@ -199,7 +198,7 @@ export default function AdminNavigator() {
 
       <Tab.Screen
         name="Servicios"
-        component={ServicesScreen}
+        component={AdminServicesNavigator}
       />
 
       <Tab.Screen

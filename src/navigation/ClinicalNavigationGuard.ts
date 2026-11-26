@@ -1,23 +1,29 @@
+import {
+  registerAdminNavigationGuard,
+  getAdminNavigationGuard,
+} from './AdminNavigationGuard';
+
 interface ClinicalNavigationGuard {
   shouldPreventNavigation: () => boolean;
   confirmNavigation: (action: () => void) => void;
 }
 
-let activeGuard: ClinicalNavigationGuard | null = null;
-
 export function registerClinicalNavigationGuard(
   guard: ClinicalNavigationGuard
 ): () => void {
-  activeGuard = guard;
-
-  return () => {
-    if (activeGuard === guard) {
-      activeGuard = null;
-    }
-  };
+  return registerAdminNavigationGuard({
+    ...guard,
+    sourceTab: 'Pacientes',
+  });
 }
 
 export function getClinicalNavigationGuard():
   ClinicalNavigationGuard | null {
-  return activeGuard;
+  const guard = getAdminNavigationGuard();
+
+  if (!guard || guard.sourceTab !== 'Pacientes') {
+    return null;
+  }
+
+  return guard;
 }
