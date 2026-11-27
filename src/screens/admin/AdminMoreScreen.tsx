@@ -13,11 +13,13 @@ import { colors } from '../../theme/colors';
 type Props = {
   onOpenCenterSettings: () => void;
   onOpenWeeklySchedule: () => void;
+  onOpenSpecialSchedules: () => void;
 };
 
 export default function AdminMoreScreen({
   onOpenCenterSettings,
   onOpenWeeklySchedule,
+  onOpenSpecialSchedules,
 }: Props) {
   const insets = useSafeAreaInsets();
 
@@ -106,6 +108,39 @@ export default function AdminMoreScreen({
             color={colors.textMuted}
           />
         </Pressable>
+
+        <Pressable
+          style={[
+            styles.menuItem,
+            styles.scheduleMenuItem,
+          ]}
+          onPress={onOpenSpecialSchedules}
+          accessibilityRole="button"
+        >
+          <View style={styles.iconContainer}>
+            <Ionicons
+              name="calendar-outline"
+              size={22}
+              color={colors.primary}
+            />
+          </View>
+
+          <View style={styles.menuText}>
+            <Text style={styles.menuTitle}>
+              Horarios especiales
+            </Text>
+
+            <Text style={styles.menuDescription}>
+              Configura horarios y cierres para fechas concretas
+            </Text>
+          </View>
+
+          <Ionicons
+            name="chevron-forward"
+            size={20}
+            color={colors.textMuted}
+          />
+        </Pressable>
       </View>
     </ScrollView>
   );
@@ -145,6 +180,9 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: colors.surfaceBorder,
+  },
+  scheduleMenuItem: {
+    marginTop: 12,
   },
   iconContainer: {
     width: 44,
