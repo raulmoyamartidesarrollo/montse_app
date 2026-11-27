@@ -1,4 +1,19 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "vacations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "startDateISO",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "endDateISO",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }

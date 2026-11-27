@@ -14,12 +14,14 @@ type Props = {
   onOpenCenterSettings: () => void;
   onOpenWeeklySchedule: () => void;
   onOpenSpecialSchedules: () => void;
+  onOpenVacations: () => void;
 };
 
 export default function AdminMoreScreen({
   onOpenCenterSettings,
   onOpenWeeklySchedule,
   onOpenSpecialSchedules,
+  onOpenVacations,
 }: Props) {
   const insets = useSafeAreaInsets();
 
@@ -132,6 +134,39 @@ export default function AdminMoreScreen({
 
             <Text style={styles.menuDescription}>
               Configura horarios y cierres para fechas concretas
+            </Text>
+          </View>
+
+          <Ionicons
+            name="chevron-forward"
+            size={20}
+            color={colors.textMuted}
+          />
+        </Pressable>
+
+        <Pressable
+          style={[
+            styles.menuItem,
+            styles.scheduleMenuItem,
+          ]}
+          onPress={onOpenVacations}
+          accessibilityRole="button"
+        >
+          <View style={styles.iconContainer}>
+            <Ionicons
+              name="sunny-outline"
+              size={22}
+              color={colors.primary}
+            />
+          </View>
+
+          <View style={styles.menuText}>
+            <Text style={styles.menuTitle}>
+              Vacaciones
+            </Text>
+
+            <Text style={styles.menuDescription}>
+              Gestiona los periodos de vacaciones del centro
             </Text>
           </View>
 

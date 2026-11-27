@@ -24,6 +24,19 @@ import {
   validateSpecialScheduleQuery,
 } from "./schedules/specialSchedule";
 
+import {
+  validateVacationInput,
+  validateVacationUpdateInput,
+  validateVacationId,
+  validateVacationIdInput,
+  validateVacationQuery,
+  doVacationRangesOverlap,
+  assertVacationCreationAllowed,
+  assertVacationUpdateAllowed,
+  assertVacationDeletionAllowed,
+  type VacationDateRange,
+} from "./schedules/vacationSchedule";
+
 
 initializeApp();
 
@@ -7733,6 +7746,1032 @@ export const deleteCenterSpecialSchedule = onCall(
     return {
       success: true,
       dateISO,
+    };
+  }
+);
+
+// ==================================================
+// SERIALIZAR VACACIONES DEL CENTRO
+// ==================================================
+
+/**
+ * Valida los datos almacenados en Firestore y convierte
+ * los campos Timestamp en cadenas ISO.
+ *
+ * Se reutilizará también en las operaciones de
+ * actualización y eliminación.
+ */
+function serializeCenterVacation(
+  document: FirebaseFirestore.DocumentSnapshot
+) {
+  const data = document.data();
+
+  try {
+    if (!document.exists || !data) {
+      throw new Error(
+        "El documento de vacaciones no existe."
+      );
+    }
+
+    const id = validateVacationId(
+      document.id
+    );
+
+    const vacation = validateVacationInput({
+      startDateISO: data.startDateISO,
+      endDateISO: data.endDateISO,
+      reason: data.reason,
+    });
+
+    // ------------------------------------------------
+    // VALIDAR CAMPOS DE AUDITORÍA
+    // ------------------------------------------------
+
+    if (
+      typeof data.createdBy !== "string" ||
+      data.createdBy.trim().length === 0 ||
+      typeof data.updatedBy !== "string" ||
+      data.updatedBy.trim().length === 0
+    ) {
+      throw new Error(
+        "Los campos de auditoría no son válidos."
+      );
+    }
+
+    if (
+      !(data.createdAt instanceof Timestamp) ||
+      !(data.updatedAt instanceof Timestamp)
+    ) {
+      throw new Error(
+        "Las fechas de auditoría no son válidas."
+      );
+    }
+
+    return {
+      id,
+
+      ...vacation,
+
+      createdAt: data.createdAt
+        .toDate()
+        .toISOString(),
+
+      createdBy: data.createdBy,
+
+      updatedAt: data.updatedAt
+        .toDate()
+        .toISOString(),
+
+      updatedBy: data.updatedBy,
+    };
+  } catch (error) {
+    console.error(
+      "[serializeCenterVacation] Documento no válido:",
+      document.id,
+      error
+    );
+
+    throw new HttpsError(
+      "failed-precondition",
+      "Existe un periodo de vacaciones almacenado que no es válido."
+    );
+  }
+}
+
+// ==================================================
+// CONSULTAR VACACIONES DEL CENTRO
+// ==================================================
+
+/**
+ * Consulta las vacaciones del centro mediante filtros
+ * de fechas y paginación con cursor compuesto.
+ *
+ * Los límites de los periodos son inclusivos,
+ * excepto el límite del histórico.
+ */
+export const getCenterVacations = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // ------------------------------------------------
+    // AUTENTICACIÓN
+    // ------------------------------------------------
+
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // ------------------------------------------------
+    // COMPROBAR PERMISOS
+    // ------------------------------------------------
+
+    await assertCenterManagementAccess(uid);
+
+    // ------------------------------------------------
+    // VALIDAR PETICIÓN
+    // ------------------------------------------------
+
+    const filters = validateVacationQuery(
+      request.data
+    );
+
+    // ------------------------------------------------
+    // REFERENCIA FIRESTORE
+    // ------------------------------------------------
+
+    const collectionRef = db
+      .collection("centers")
+      .doc(CENTER_ID)
+      .collection("vacations");
+
+    // ------------------------------------------------
+    // ORDENACIÓN ESTABLE
+    // ------------------------------------------------
+
+    let query: FirebaseFirestore.Query =
+      collectionRef.orderBy(
+        "startDateISO",
+        "asc"
+      );
+
+    // ------------------------------------------------
+    // FILTROS DE FECHAS
+    // ------------------------------------------------
+
+    if (filters.fromDateISO !== undefined) {
+      query = query.where(
+        "endDateISO",
+        ">=",
+        filters.fromDateISO
+      );
+    }
+
+    if (filters.toDateISO !== undefined) {
+      query = query.where(
+        "startDateISO",
+        "<=",
+        filters.toDateISO
+      );
+    }
+
+    if (filters.endBeforeDateISO !== undefined) {
+      query = query.where(
+        "endDateISO",
+        "<",
+        filters.endBeforeDateISO
+      );
+    }
+
+    // Cuando filtramos por fecha final, la añadimos
+    // explícitamente a la ordenación y al cursor.
+    //
+    // Como el contrato actual del cursor contiene
+    // únicamente fecha inicial e ID, utilizaremos
+    // una consulta auxiliar para recuperar la fecha
+    // final del documento correspondiente.
+
+    const usesEndDateFilter =
+      filters.fromDateISO !== undefined ||
+      filters.endBeforeDateISO !== undefined;
+
+    if (usesEndDateFilter) {
+      query = query.orderBy(
+        "endDateISO",
+        "asc"
+      );
+    }
+
+    query = query.orderBy(
+      FieldPath.documentId(),
+      "asc"
+    );
+
+    // ------------------------------------------------
+    // PAGINACIÓN
+    // ------------------------------------------------
+
+    if (
+      filters.cursorStartDateISO !== undefined &&
+      filters.cursorVacationId !== undefined
+    ) {
+      if (usesEndDateFilter) {
+        const cursorSnapshot =
+          await collectionRef
+            .doc(filters.cursorVacationId)
+            .get();
+
+        if (!cursorSnapshot.exists) {
+          throw new HttpsError(
+            "failed-precondition",
+            "El listado ha cambiado. Actualiza las vacaciones."
+          );
+        }
+
+        const cursorVacation =
+          serializeCenterVacation(cursorSnapshot);
+
+        if (
+          cursorVacation.startDateISO !==
+          filters.cursorStartDateISO
+        ) {
+          throw new HttpsError(
+            "failed-precondition",
+            "El listado ha cambiado. Actualiza las vacaciones."
+          );
+        }
+
+        if (
+          (
+            filters.fromDateISO !== undefined &&
+            cursorVacation.endDateISO <
+              filters.fromDateISO
+          ) ||
+          (
+            filters.toDateISO !== undefined &&
+            cursorVacation.startDateISO >
+              filters.toDateISO
+          ) ||
+          (
+            filters.endBeforeDateISO !== undefined &&
+            cursorVacation.endDateISO >=
+              filters.endBeforeDateISO
+          )
+        ) {
+          throw new HttpsError(
+            "failed-precondition",
+            "El cursor ya no pertenece al listado solicitado."
+          );
+        }
+
+        query = query.startAfter(
+          cursorVacation.startDateISO,
+          cursorVacation.endDateISO,
+          cursorVacation.id
+        );
+      } else {
+        query = query.startAfter(
+          filters.cursorStartDateISO,
+          filters.cursorVacationId
+        );
+      }
+    }
+
+    // ------------------------------------------------
+    // EJECUTAR CONSULTA
+    // ------------------------------------------------
+
+    const snapshot = await query
+      .limit(filters.limit + 1)
+      .get();
+
+    const hasMore =
+      snapshot.docs.length > filters.limit;
+
+    const documents = snapshot.docs.slice(
+      0,
+      filters.limit
+    );
+
+    // ------------------------------------------------
+    // VALIDAR Y SERIALIZAR RESULTADOS
+    // ------------------------------------------------
+
+    const vacations = documents.map(
+      serializeCenterVacation
+    );
+
+    // ------------------------------------------------
+    // CURSOR DE LA SIGUIENTE PÁGINA
+    // ------------------------------------------------
+
+    const lastVacation =
+      vacations[vacations.length - 1];
+
+    const nextCursor =
+      hasMore && lastVacation
+        ? {
+            startDateISO:
+              lastVacation.startDateISO,
+
+            vacationId:
+              lastVacation.id,
+          }
+        : null;
+
+    // ------------------------------------------------
+    // RESPUESTA
+    // ------------------------------------------------
+
+    return {
+      success: true,
+      vacations,
+      hasMore,
+      nextCursor,
+    };
+  }
+);
+
+// ==================================================
+// COMPROBAR SOLAPAMIENTOS DE VACACIONES
+// ==================================================
+
+/**
+ * Comprueba que no existe otro periodo de vacaciones
+ * que coincida con el intervalo solicitado.
+ *
+ * Debe ejecutarse dentro de una transacción que haya
+ * leído previamente el documento de control.
+ *
+ * Durante la edición permite excluir el propio
+ * documento que se está modificando.
+ */
+async function assertNoCenterVacationOverlap(
+  transaction: FirebaseFirestore.Transaction,
+  collectionRef: FirebaseFirestore.CollectionReference,
+  range: VacationDateRange,
+  excludedVacationId?: string
+): Promise<void> {
+  const overlapQuery = collectionRef
+    .where(
+      "startDateISO",
+      "<=",
+      range.endDateISO
+    )
+    .where(
+      "endDateISO",
+      ">=",
+      range.startDateISO
+    )
+    .orderBy("startDateISO", "asc")
+    .orderBy("endDateISO", "asc")
+    .limit(
+      excludedVacationId !== undefined ? 2 : 1
+    );
+
+  const snapshot =
+    await transaction.get(overlapQuery);
+
+  for (const document of snapshot.docs) {
+    if (
+      excludedVacationId !== undefined &&
+      document.id === excludedVacationId
+    ) {
+      continue;
+    }
+
+    const vacation =
+      serializeCenterVacation(document);
+
+    if (
+      doVacationRangesOverlap(
+        range,
+        vacation
+      )
+    ) {
+      throw new HttpsError(
+        "already-exists",
+        "El periodo seleccionado coincide con otras vacaciones del centro.",
+        {
+          conflictingVacationId:
+            vacation.id,
+
+          startDateISO:
+            vacation.startDateISO,
+
+          endDateISO:
+            vacation.endDateISO,
+        }
+      );
+    }
+  }
+}
+
+// ==================================================
+// ACTUALIZAR CONTROL DE CONCURRENCIA
+// ==================================================
+
+/**
+ * Actualiza el documento compartido de control.
+ *
+ * Todas las operaciones de creación, edición y
+ * eliminación deberán leer y escribir este documento
+ * dentro de su propia transacción.
+ */
+function updateCenterVacationLock(
+  transaction: FirebaseFirestore.Transaction,
+  lockRef: FirebaseFirestore.DocumentReference,
+  lockSnapshot: FirebaseFirestore.DocumentSnapshot,
+  uid: string
+): void {
+  let revision = 0;
+
+  if (lockSnapshot.exists) {
+    const data = lockSnapshot.data();
+
+    if (
+      !data ||
+      typeof data.revision !== "number" ||
+      !Number.isSafeInteger(data.revision) ||
+      data.revision < 1 ||
+      data.revision >= Number.MAX_SAFE_INTEGER
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "El control de vacaciones del centro no es válido."
+      );
+    }
+
+    revision = data.revision;
+  }
+
+  transaction.set(
+    lockRef,
+    {
+      revision: revision + 1,
+
+      updatedAt:
+        FieldValue.serverTimestamp(),
+
+      updatedBy: uid,
+    },
+    {
+      merge: true,
+    }
+  );
+}
+
+// ==================================================
+// CREAR VACACIONES DEL CENTRO
+// ==================================================
+
+/**
+ * Crea un periodo de vacaciones del centro.
+ *
+ * Impide periodos solapados mediante una transacción
+ * y un documento compartido de control.
+ *
+ * No modifica ni cancela citas existentes.
+ */
+export const createCenterVacation = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // ------------------------------------------------
+    // AUTENTICACIÓN
+    // ------------------------------------------------
+
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // ------------------------------------------------
+    // COMPROBAR PERMISOS
+    // ------------------------------------------------
+
+    await assertCenterManagementAccess(uid);
+
+    // ------------------------------------------------
+    // VALIDAR PETICIÓN
+    // ------------------------------------------------
+
+    const vacation = validateVacationInput(
+      request.data
+    );
+
+    // ------------------------------------------------
+    // REFERENCIAS FIRESTORE
+    // ------------------------------------------------
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const vacationsRef = centerRef
+      .collection("vacations");
+
+    const vacationRef =
+      vacationsRef.doc();
+
+    const lockRef = centerRef
+      .collection("scheduleLocks")
+      .doc("vacations");
+
+    // ------------------------------------------------
+    // CREACIÓN TRANSACCIONAL
+    // ------------------------------------------------
+
+    await db.runTransaction(
+      async (transaction) => {
+        // Leer primero el documento compartido.
+
+        const lockSnapshot =
+          await transaction.get(lockRef);
+
+        // Recuperar los permisos actuales.
+
+        const [
+          userSnapshot,
+          centerSnapshot,
+        ] = await Promise.all([
+          transaction.get(userRef),
+          transaction.get(centerRef),
+        ]);
+
+        validateCenterManagementPermissions(
+          uid,
+          userSnapshot.data(),
+          centerSnapshot.data()
+        );
+
+        // --------------------------------------------
+        // VALIDAR RESTRICCIONES TEMPORALES
+        // --------------------------------------------
+
+        assertVacationCreationAllowed(vacation);
+
+        // --------------------------------------------
+        // COMPROBAR SOLAPAMIENTOS
+        // --------------------------------------------
+
+        await assertNoCenterVacationOverlap(
+          transaction,
+          vacationsRef,
+          vacation
+        );
+
+        // --------------------------------------------
+        // CREAR VACACIONES
+        // --------------------------------------------
+
+        transaction.create(
+          vacationRef,
+          {
+            startDateISO:
+              vacation.startDateISO,
+
+            endDateISO:
+              vacation.endDateISO,
+
+            reason:
+              vacation.reason,
+
+            createdAt:
+              FieldValue.serverTimestamp(),
+
+            createdBy: uid,
+
+            updatedAt:
+              FieldValue.serverTimestamp(),
+
+            updatedBy: uid,
+          }
+        );
+
+        // --------------------------------------------
+        // ACTUALIZAR CONTROL DE CONCURRENCIA
+        // --------------------------------------------
+
+        updateCenterVacationLock(
+          transaction,
+          lockRef,
+          lockSnapshot,
+          uid
+        );
+      }
+    );
+
+    // ------------------------------------------------
+    // RESPUESTA
+    // ------------------------------------------------
+
+    return {
+      success: true,
+      vacationId: vacationRef.id,
+    };
+  }
+);
+
+// ==================================================
+// ACTUALIZAR VACACIONES DEL CENTRO
+// ==================================================
+
+/**
+ * Actualiza un periodo de vacaciones existente.
+ *
+ * Permite modificar las fechas y el motivo.
+ * Conserva el identificador y la auditoría original.
+ *
+ * Impide solapamientos con otros periodos mediante
+ * una transacción y el documento de concurrencia.
+ *
+ * No modifica ni cancela citas existentes.
+ */
+export const updateCenterVacation = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // ------------------------------------------------
+    // AUTENTICACIÓN
+    // ------------------------------------------------
+
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // ------------------------------------------------
+    // COMPROBAR PERMISOS
+    // ------------------------------------------------
+
+    await assertCenterManagementAccess(uid);
+
+    // ------------------------------------------------
+    // VALIDAR PETICIÓN
+    // ------------------------------------------------
+
+    const vacation = validateVacationUpdateInput(
+      request.data
+    );
+
+    // ------------------------------------------------
+    // REFERENCIAS FIRESTORE
+    // ------------------------------------------------
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const vacationsRef = centerRef
+      .collection("vacations");
+
+    const vacationRef = vacationsRef
+      .doc(vacation.vacationId);
+
+    const lockRef = centerRef
+      .collection("scheduleLocks")
+      .doc("vacations");
+
+    // ------------------------------------------------
+    // ACTUALIZACIÓN TRANSACCIONAL
+    // ------------------------------------------------
+
+    await db.runTransaction(
+      async (transaction) => {
+        // Leer primero el documento compartido
+        // de control de concurrencia.
+
+        const lockSnapshot =
+          await transaction.get(lockRef);
+
+        // Recuperar los permisos y las vacaciones
+        // que se quieren modificar.
+
+        const [
+          userSnapshot,
+          centerSnapshot,
+          vacationSnapshot,
+        ] = await Promise.all([
+          transaction.get(userRef),
+          transaction.get(centerRef),
+          transaction.get(vacationRef),
+        ]);
+
+        // --------------------------------------------
+        // VALIDAR PERMISOS ACTUALES
+        // --------------------------------------------
+
+        validateCenterManagementPermissions(
+          uid,
+          userSnapshot.data(),
+          centerSnapshot.data()
+        );
+
+        // --------------------------------------------
+        // COMPROBAR EXISTENCIA
+        // --------------------------------------------
+
+        if (!vacationSnapshot.exists) {
+          throw new HttpsError(
+            "not-found",
+            "El periodo de vacaciones ya no existe."
+          );
+        }
+
+        // --------------------------------------------
+        // VALIDAR DOCUMENTO ALMACENADO
+        // --------------------------------------------
+
+        const storedVacation =
+          serializeCenterVacation(
+            vacationSnapshot
+          );
+
+        // --------------------------------------------
+        // VALIDAR RESTRICCIONES TEMPORALES
+        // --------------------------------------------
+
+        assertVacationUpdateAllowed(
+          storedVacation,
+          vacation
+        );
+
+        // --------------------------------------------
+        // COMPROBAR SOLAPAMIENTOS
+        // --------------------------------------------
+
+        // Excluir el propio periodo durante
+        // la comprobación de solapamientos.
+
+        await assertNoCenterVacationOverlap(
+          transaction,
+          vacationsRef,
+          vacation,
+          vacation.vacationId
+        );
+
+        // --------------------------------------------
+        // EVITAR ESCRITURAS INNECESARIAS
+        // --------------------------------------------
+
+        const hasChanges =
+          storedVacation.startDateISO !==
+            vacation.startDateISO ||
+          storedVacation.endDateISO !==
+            vacation.endDateISO ||
+          storedVacation.reason !==
+            vacation.reason;
+
+        if (!hasChanges) {
+          return;
+        }
+
+        // --------------------------------------------
+        // ACTUALIZAR CAMPOS EDITABLES
+        // --------------------------------------------
+
+        transaction.update(
+          vacationRef,
+          {
+            startDateISO:
+              vacation.startDateISO,
+
+            endDateISO:
+              vacation.endDateISO,
+
+            reason:
+              vacation.reason,
+
+            updatedAt:
+              FieldValue.serverTimestamp(),
+
+            updatedBy: uid,
+          }
+        );
+
+        // --------------------------------------------
+        // ACTUALIZAR CONTROL DE CONCURRENCIA
+        // --------------------------------------------
+
+        updateCenterVacationLock(
+          transaction,
+          lockRef,
+          lockSnapshot,
+          uid
+        );
+      }
+    );
+
+    // ------------------------------------------------
+    // RESPUESTA
+    // ------------------------------------------------
+
+    return {
+      success: true,
+      vacationId: vacation.vacationId,
+    };
+  }
+);
+
+// ==================================================
+// ELIMINAR VACACIONES DEL CENTRO
+// ==================================================
+
+/**
+ * Elimina un periodo de vacaciones existente.
+ *
+ * Conserva un registro independiente de auditoría
+ * con los datos originales del documento.
+ *
+ * La eliminación, la auditoría y la actualización
+ * del control de concurrencia son atómicas.
+ *
+ * No modifica ni cancela citas existentes.
+ */
+export const deleteCenterVacation = onCall(
+  {
+    region: "europe-west1",
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    // ------------------------------------------------
+    // AUTENTICACIÓN
+    // ------------------------------------------------
+
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "Debes iniciar sesión."
+      );
+    }
+
+    const uid = request.auth.uid;
+
+    // ------------------------------------------------
+    // COMPROBAR PERMISOS
+    // ------------------------------------------------
+
+    await assertCenterManagementAccess(uid);
+
+    // ------------------------------------------------
+    // VALIDAR PETICIÓN
+    // ------------------------------------------------
+
+    const { vacationId } =
+      validateVacationIdInput(
+        request.data
+      );
+
+    // ------------------------------------------------
+    // REFERENCIAS FIRESTORE
+    // ------------------------------------------------
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const centerRef = db
+      .collection("centers")
+      .doc(CENTER_ID);
+
+    const vacationRef = centerRef
+      .collection("vacations")
+      .doc(vacationId);
+
+    const deletionLogRef = centerRef
+      .collection("vacationDeletionLogs")
+      .doc();
+
+    const lockRef = centerRef
+      .collection("scheduleLocks")
+      .doc("vacations");
+
+    // ------------------------------------------------
+    // ELIMINACIÓN TRANSACCIONAL
+    // ------------------------------------------------
+
+    await db.runTransaction(
+      async (transaction) => {
+        // Leer primero el documento compartido
+        // de control de concurrencia.
+
+        const lockSnapshot =
+          await transaction.get(lockRef);
+
+        // Recuperar permisos y documento original.
+
+        const [
+          userSnapshot,
+          centerSnapshot,
+          vacationSnapshot,
+        ] = await Promise.all([
+          transaction.get(userRef),
+          transaction.get(centerRef),
+          transaction.get(vacationRef),
+        ]);
+
+        // --------------------------------------------
+        // VALIDAR PERMISOS ACTUALES
+        // --------------------------------------------
+
+        validateCenterManagementPermissions(
+          uid,
+          userSnapshot.data(),
+          centerSnapshot.data()
+        );
+
+        // --------------------------------------------
+        // COMPROBAR EXISTENCIA
+        // --------------------------------------------
+
+        if (!vacationSnapshot.exists) {
+          throw new HttpsError(
+            "not-found",
+            "El periodo de vacaciones ya no existe."
+          );
+        }
+
+        // --------------------------------------------
+        // VALIDAR DOCUMENTO ALMACENADO
+        // --------------------------------------------
+
+        const validatedVacation =
+          serializeCenterVacation(
+            vacationSnapshot
+          );
+
+        // --------------------------------------------
+        // VALIDAR RESTRICCIONES TEMPORALES
+        // --------------------------------------------
+
+        assertVacationDeletionAllowed(
+          validatedVacation
+        );
+
+        const storedVacation =
+          vacationSnapshot.data();
+
+        if (!storedVacation) {
+          throw new HttpsError(
+            "failed-precondition",
+            "El periodo de vacaciones almacenado no es válido."
+          );
+        }
+
+        // --------------------------------------------
+        // REGISTRAR AUDITORÍA DE ELIMINACIÓN
+        // --------------------------------------------
+
+        transaction.create(
+          deletionLogRef,
+          {
+            vacationId,
+
+            previousVacation:
+              storedVacation,
+
+            deletedAt:
+              FieldValue.serverTimestamp(),
+
+            deletedBy: uid,
+          }
+        );
+
+        // --------------------------------------------
+        // ELIMINAR VACACIONES
+        // --------------------------------------------
+
+        transaction.delete(
+          vacationRef
+        );
+
+        // --------------------------------------------
+        // ACTUALIZAR CONTROL DE CONCURRENCIA
+        // --------------------------------------------
+
+        updateCenterVacationLock(
+          transaction,
+          lockRef,
+          lockSnapshot,
+          uid
+        );
+      }
+    );
+
+    // ------------------------------------------------
+    // RESPUESTA
+    // ------------------------------------------------
+
+    return {
+      success: true,
+      vacationId,
     };
   }
 );

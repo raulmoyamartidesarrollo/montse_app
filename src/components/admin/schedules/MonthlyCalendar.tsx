@@ -59,6 +59,8 @@ interface MonthlyCalendarProps {
   disabled?: boolean;
 
   daysDisabled?: boolean;
+
+  minimumDateISO?: string;
 }
 
 // ==================================================
@@ -126,6 +128,7 @@ export default function MonthlyCalendar({
   selectedRange,
   disabled = false,
   daysDisabled = false,
+  minimumDateISO,
 }: MonthlyCalendarProps) {
   const monthStartISO =
     getMonthStartISO(monthISO);
@@ -341,8 +344,13 @@ export default function MonthlyCalendar({
               const isHighlighted =
                 isSelected || isRangeBoundary;
 
+              const isBeforeMinimumDate =
+                minimumDateISO !== undefined &&
+                day.dateISO < minimumDateISO;
+
               const isDisabled =
                 disabled ||
+                isBeforeMinimumDate ||
                 (
                   daysDisabled &&
                   day.isCurrentMonth
@@ -394,6 +402,9 @@ export default function MonthlyCalendar({
 
                       isToday &&
                         styles.todayDay,
+
+                      isBeforeMinimumDate &&
+                        styles.disabledDay,
                     ]}
                     disabled={isDisabled}
                     onPress={() => {
@@ -595,6 +606,10 @@ const styles = StyleSheet.create({
 
   selectedDayText: {
     color: colors.white,
+  },
+
+  disabledDay: {
+    opacity: 0.35,
   },
 
   dayIndicator: {

@@ -16,6 +16,10 @@ import CenterSessionPackagesScreen from '../screens/admin/CenterSessionPackagesS
 import CenterWeeklyScheduleScreen from '../screens/admin/CenterWeeklyScheduleScreen';
 import CenterSpecialSchedulesScreen from '../screens/admin/CenterSpecialSchedulesScreen';
 import CenterSpecialScheduleFormScreen from '../screens/admin/CenterSpecialScheduleFormScreen';
+import CenterVacationsScreen from '../screens/admin/CenterVacationsScreen';
+import CenterVacationFormScreen, {
+  type CenterVacationFormParams,
+} from '../screens/admin/CenterVacationFormScreen';
 
 import type {
   CenterSpecialSchedule,
@@ -31,6 +35,10 @@ export type AdminMoreStackParamList = {
   CenterWeeklySchedule: undefined;
 
   CenterSpecialSchedules: undefined;
+
+  CenterVacations: undefined;
+
+  CenterVacationForm: CenterVacationFormParams | undefined;
 
   CenterSpecialScheduleForm: {
     schedule?: CenterSpecialSchedule;
@@ -84,6 +92,9 @@ export default function AdminMoreNavigator() {
             onOpenSpecialSchedules={() =>
               navigation.navigate('CenterSpecialSchedules')
             }
+            onOpenVacations={() =>
+              navigation.navigate('CenterVacations')
+            }
           />
         )}
       </Stack.Screen>
@@ -106,6 +117,16 @@ export default function AdminMoreNavigator() {
       <Stack.Screen
         name="CenterSpecialScheduleForm"
         component={CenterSpecialScheduleFormScreen}
+      />
+
+      <Stack.Screen
+        name="CenterVacations"
+        component={CenterVacationsScreen}
+      />
+
+      <Stack.Screen
+        name="CenterVacationForm"
+        component={CenterVacationFormScreen}
       />
 
       <Stack.Screen
