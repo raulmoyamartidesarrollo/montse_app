@@ -34,6 +34,7 @@ export type AdminMoreStackParamList = {
 
   CenterSpecialScheduleForm: {
     schedule?: CenterSpecialSchedule;
+    dateISO?: string;
   } | undefined;
 
   CenterGeneral: {

@@ -1,12 +1,15 @@
 import React, {
   useCallback,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -32,17 +35,26 @@ import { colors } from '../../theme/colors';
 
 import {
   getCenterSpecialSchedules,
+  deleteCenterSpecialSchedule,
 } from '../../services/centerSpecialSchedules';
 
 import {
-  DEFAULT_SPECIAL_SCHEDULE_PAGE_SIZE,
   type CenterSpecialSchedule,
+  type GetCenterSpecialSchedulesInput,
 } from '../../types/centerSpecialSchedules';
 
 import {
   getCenterTodayISO,
   addDaysToDateISO,
+  formatCenterDate,
+  getMonthStartISO,
+  getMonthEndISO,
+  isValidDateISO,
 } from '../../utils/centerScheduleDates';
+
+import MonthlyCalendar, {
+  type CalendarDayMark,
+} from '../../components/admin/schedules/MonthlyCalendar';
 
 import SpecialScheduleCard from '../../components/admin/schedules/SpecialScheduleCard';
 
@@ -56,6 +68,14 @@ import type {
 
 type ScheduleFilter = 'upcoming' | 'history';
 
+type ViewMode = 'calendar' | 'list';
+
+type LoadMode = 'initial' | 'refresh' | 'more';
+
+const PAGE_SIZE = 20;
+
+const MONTH_PAGE_SIZE = 31;
+
 export default function CenterSpecialSchedulesScreen() {
   const navigation = useNavigation<
     NativeStackNavigationProp<AdminMoreStackParamList>
@@ -65,6 +85,14 @@ export default function CenterSpecialSchedulesScreen() {
 
   const [filter, setFilter] =
     useState<ScheduleFilter>('upcoming');
+
+  const [viewMode, setViewMode] =
+    useState<ViewMode>('calendar');
+
+  const [monthISO, setMonthISO] =
+    useState(() =>
+      getMonthStartISO(getCenterTodayISO())
+    );
 
   const [schedules, setSchedules] =
     useState<CenterSpecialSchedule[]>([]);
@@ -78,65 +106,243 @@ export default function CenterSpecialSchedulesScreen() {
   const [hasMore, setHasMore] =
     useState(false);
 
+  const [refreshing, setRefreshing] =
+    useState(false);
+
+  const [loadingMore, setLoadingMore] =
+    useState(false);
+
+  const [paginationError, setPaginationError] =
+    useState<string | null>(null);
+
+  const cursorRef = useRef<string | null>(null);
+
+  const queryBoundsRef = useRef<
+    GetCenterSpecialSchedulesInput | null
+  >(null);
+
+  const loadingRef = useRef(false);
+
+  const [deletingDateISO, setDeletingDateISO] =
+    useState<string | null>(null);
+
+  const [deleteError, setDeleteError] =
+    useState<string | null>(null);
+
+  const deletingRef = useRef(false);
+
+  const deleteAlertOpenRef = useRef(false);
+
+  const focusedRef = useRef(false);
+
   const requestIdRef = useRef(0);
+
+  const isDeleting =
+    deletingDateISO !== null;
+
+  const isBusy =
+    loading ||
+    refreshing ||
+    loadingMore ||
+    isDeleting;
+
+  // ==================================================
+  // INDICADORES DEL CALENDARIO
+  // ==================================================
+
+  const markedDates = useMemo<
+    Record<string, CalendarDayMark>
+  >(() => {
+    const marks: Record<string, CalendarDayMark> = {};
+
+    if (viewMode !== 'calendar') {
+      return marks;
+    }
+
+    for (const schedule of schedules) {
+      marks[schedule.dateISO] = {
+        status: schedule.closed
+          ? 'closed'
+          : 'special',
+
+        label: schedule.reason || undefined,
+      };
+    }
+
+    return marks;
+  }, [schedules, viewMode]);
 
   // ==================================================
   // RECUPERAR HORARIOS ESPECIALES
   // ==================================================
 
-  const loadSchedules = useCallback(async () => {
-    const requestId = ++requestIdRef.current;
+  const loadSchedules = useCallback(
+    async (mode: LoadMode = 'initial') => {
+      if (!focusedRef.current) {
+        return;
+      }
 
-    setLoading(true);
-    setError(null);
-    setSchedules([]);
-    setHasMore(false);
+      if (mode !== 'initial' && loadingRef.current) {
+        return;
+      }
 
-    try {
-      const todayISO = getCenterTodayISO();
+      if (
+        mode === 'more' &&
+        (
+          viewMode !== 'list' ||
+          !cursorRef.current ||
+          !queryBoundsRef.current
+        )
+      ) {
+        return;
+      }
 
-      const result = await getCenterSpecialSchedules({
-        ...(filter === 'upcoming'
-          ? {
-              fromDateISO: todayISO,
+      const requestId = ++requestIdRef.current;
+
+      loadingRef.current = true;
+
+      setLoading(mode === 'initial');
+      setRefreshing(mode === 'refresh');
+      setLoadingMore(mode === 'more');
+
+      setError(null);
+      setPaginationError(null);
+
+      if (mode === 'initial') {
+        setSchedules([]);
+        setHasMore(false);
+
+        cursorRef.current = null;
+        queryBoundsRef.current = null;
+      }
+
+      try {
+        const todayISO = getCenterTodayISO();
+
+        const bounds: GetCenterSpecialSchedulesInput =
+          mode === 'more'
+            ? { ...queryBoundsRef.current }
+            : viewMode === 'calendar'
+              ? {
+                  fromDateISO:
+                    getMonthStartISO(monthISO),
+
+                  toDateISO:
+                    getMonthEndISO(monthISO),
+                }
+              : filter === 'upcoming'
+                ? {
+                    fromDateISO: todayISO,
+                  }
+                : {
+                    toDateISO: addDaysToDateISO(
+                      todayISO,
+                      -1
+                    ),
+                  };
+
+        const result = await getCenterSpecialSchedules({
+          ...bounds,
+
+          ...(mode === 'more' && cursorRef.current
+            ? {
+                cursorDateISO: cursorRef.current,
+              }
+            : {}),
+
+          limit:
+            viewMode === 'calendar'
+              ? MONTH_PAGE_SIZE
+              : PAGE_SIZE,
+        });
+
+        if (
+          requestId !== requestIdRef.current ||
+          !focusedRef.current
+        ) {
+          return;
+        }
+
+        if (
+          viewMode === 'calendar' &&
+          result.hasMore
+        ) {
+          throw new Error(
+            'La consulta mensual contiene más registros de los esperados.'
+          );
+        }
+
+        if (mode === 'more') {
+          setSchedules((previous) => {
+            const merged = new Map(
+              previous.map((schedule) => [
+                schedule.dateISO,
+                schedule,
+              ])
+            );
+
+            for (const schedule of result.specialSchedules) {
+              merged.set(
+                schedule.dateISO,
+                schedule
+              );
             }
-          : {
-              toDateISO: addDaysToDateISO(
-                todayISO,
-                -1
-              ),
-            }),
 
-        limit: DEFAULT_SPECIAL_SCHEDULE_PAGE_SIZE,
-      });
+            return Array.from(merged.values()).sort(
+              (a, b) =>
+                a.dateISO.localeCompare(b.dateISO)
+            );
+          });
 
-      if (requestId !== requestIdRef.current) {
-        return;
+        } else {
+          setSchedules(result.specialSchedules);
+        }
+
+        queryBoundsRef.current = bounds;
+
+        cursorRef.current =
+          result.nextCursorDateISO;
+
+        setHasMore(result.hasMore);
+
+      } catch (err) {
+        if (
+          requestId !== requestIdRef.current ||
+          !focusedRef.current
+        ) {
+          return;
+        }
+
+        console.error(
+          '[CenterSpecialSchedulesScreen] Error cargando horarios:',
+          err
+        );
+
+        if (mode === 'initial') {
+          setError(
+            'No se han podido recuperar los horarios especiales.'
+          );
+
+        } else {
+          setPaginationError(
+            mode === 'more'
+              ? 'No se han podido cargar más horarios. Vuelve a intentarlo.'
+              : 'No se han podido actualizar los horarios. Desliza hacia abajo para reintentar.'
+          );
+        }
+
+      } finally {
+        if (requestId === requestIdRef.current) {
+          loadingRef.current = false;
+
+          setLoading(false);
+          setRefreshing(false);
+          setLoadingMore(false);
+        }
       }
-
-      setSchedules(result.specialSchedules);
-      setHasMore(result.hasMore);
-
-    } catch (err) {
-      if (requestId !== requestIdRef.current) {
-        return;
-      }
-
-      console.error(
-        '[CenterSpecialSchedulesScreen] Error cargando horarios:',
-        err
-      );
-
-      setError(
-        'No se han podido recuperar los horarios especiales.'
-      );
-
-    } finally {
-      if (requestId === requestIdRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [filter]);
+    },
+    [filter, viewMode, monthISO]
+  );
 
   // ==================================================
   // ACTUALIZAR AL ENTRAR EN LA PANTALLA
@@ -144,24 +350,39 @@ export default function CenterSpecialSchedulesScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      focusedRef.current = true;
+
+      setDeleteError(null);
+
       void loadSchedules();
 
       return () => {
+        focusedRef.current = false;
+
+        deleteAlertOpenRef.current = false;
+
+        loadingRef.current = false;
+
         requestIdRef.current += 1;
       };
     }, [loadSchedules])
   );
 
   // ==================================================
-  // CAMBIAR FILTRO
+  // INVALIDAR CONSULTAS ANTERIORES
   // ==================================================
 
-  function handleFilterChange(
-    nextFilter: ScheduleFilter
-  ) {
-    if (nextFilter === filter) {
-      return;
-    }
+  function resetScheduleQuery() {
+    setDeleteError(null);
+    setPaginationError(null);
+
+    cursorRef.current = null;
+    queryBoundsRef.current = null;
+
+    loadingRef.current = false;
+
+    setRefreshing(false);
+    setLoadingMore(false);
 
     // Invalidar cualquier consulta anterior.
 
@@ -171,8 +392,308 @@ export default function CenterSpecialSchedulesScreen() {
     setError(null);
     setSchedules([]);
     setHasMore(false);
+  }
+
+  // ==================================================
+  // CAMBIAR FILTRO
+  // ==================================================
+
+  function handleFilterChange(
+    nextFilter: ScheduleFilter
+  ) {
+    if (
+      viewMode !== 'list' ||
+      nextFilter === filter ||
+      deletingRef.current ||
+      deleteAlertOpenRef.current ||
+      !navigation.isFocused()
+    ) {
+      return;
+    }
+
+    resetScheduleQuery();
 
     setFilter(nextFilter);
+  }
+
+  // ==================================================
+  // CAMBIAR VISTA
+  // ==================================================
+
+  function handleViewModeChange(
+    nextViewMode: ViewMode
+  ) {
+    if (
+      nextViewMode === viewMode ||
+      deletingRef.current ||
+      deleteAlertOpenRef.current ||
+      !navigation.isFocused()
+    ) {
+      return;
+    }
+
+    resetScheduleQuery();
+
+    setViewMode(nextViewMode);
+  }
+
+  // ==================================================
+  // CAMBIAR MES
+  // ==================================================
+
+  function handleMonthChange(
+    nextMonthISO: string
+  ) {
+    if (
+      viewMode !== 'calendar' ||
+      !isValidDateISO(nextMonthISO) ||
+      deletingRef.current ||
+      deleteAlertOpenRef.current ||
+      !navigation.isFocused()
+    ) {
+      return;
+    }
+
+    const normalizedMonth =
+      getMonthStartISO(nextMonthISO);
+
+    if (normalizedMonth === monthISO) {
+      return;
+    }
+
+    resetScheduleQuery();
+
+    setMonthISO(normalizedMonth);
+  }
+
+  // ==================================================
+  // PULSAR DÍA DEL CALENDARIO
+  // ==================================================
+
+  function handleCalendarDayPress(
+    dateISO: string
+  ) {
+    if (
+      viewMode !== 'calendar' ||
+      !isValidDateISO(dateISO) ||
+      getMonthStartISO(dateISO) !== monthISO ||
+      isBusy ||
+      !!error ||
+      !!paginationError ||
+      loadingRef.current ||
+      deletingRef.current ||
+      deleteAlertOpenRef.current ||
+      !navigation.isFocused()
+    ) {
+      return;
+    }
+
+    const existingSchedule =
+      schedules.find(
+        (schedule) =>
+          schedule.dateISO === dateISO
+      );
+
+    if (existingSchedule) {
+      navigation.navigate(
+        'CenterSpecialScheduleForm',
+        {
+          schedule: existingSchedule,
+        }
+      );
+
+      return;
+    }
+
+    navigation.navigate(
+      'CenterSpecialScheduleForm',
+      {
+        dateISO,
+      }
+    );
+  }
+
+  // ==================================================
+  // ACTUALIZAR LISTADO
+  // ==================================================
+
+  function handleRefresh() {
+    if (
+      loadingRef.current ||
+      deletingRef.current ||
+      deleteAlertOpenRef.current ||
+      !navigation.isFocused()
+    ) {
+      return;
+    }
+
+    setDeleteError(null);
+
+    void loadSchedules(
+      error ? 'initial' : 'refresh'
+    );
+  }
+
+  // ==================================================
+  // CARGAR SIGUIENTE PÁGINA
+  // ==================================================
+
+  function handleLoadMore() {
+    if (
+      viewMode !== 'list' ||
+      !hasMore ||
+      loadingRef.current ||
+      deletingRef.current ||
+      deleteAlertOpenRef.current ||
+      !navigation.isFocused()
+    ) {
+      return;
+    }
+
+    void loadSchedules('more');
+  }
+
+  // ==================================================
+  // ELIMINAR HORARIO ESPECIAL
+  // ==================================================
+
+  async function handleDeleteSchedule(
+    dateISO: string
+  ) {
+    if (
+      deletingRef.current ||
+      loadingRef.current ||
+      !navigation.isFocused()
+    ) {
+      return;
+    }
+
+    deletingRef.current = true;
+
+    setDeletingDateISO(dateISO);
+    setDeleteError(null);
+
+    try {
+      await deleteCenterSpecialSchedule({
+        dateISO,
+      });
+
+      // Retirar el horario eliminado del listado local.
+
+      setSchedules((previous) =>
+        previous.filter(
+          (schedule) =>
+            schedule.dateISO !== dateISO
+        )
+      );
+
+    } catch (err) {
+      console.error(
+        '[CenterSpecialSchedulesScreen] Error eliminando horario:',
+        err
+      );
+
+      const code =
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err
+          ? String(err.code)
+          : '';
+
+      if (code === 'functions/not-found') {
+        // El horario ya no existe en Firebase.
+
+        setSchedules((previous) =>
+          previous.filter(
+            (schedule) =>
+              schedule.dateISO !== dateISO
+          )
+        );
+
+      } else if (focusedRef.current) {
+        setDeleteError(
+          code === 'functions/permission-denied'
+            ? 'No tienes permisos para eliminar horarios especiales.'
+            : code === 'functions/unauthenticated'
+              ? 'Tu sesión ha caducado. Vuelve a iniciar sesión.'
+              : 'No se ha podido confirmar la eliminación. Revisa el listado antes de volver a intentarlo.'
+        );
+      }
+
+    } finally {
+      try {
+        // Consultar Firebase nuevamente si la pantalla
+        // continúa activa.
+
+        if (
+          focusedRef.current &&
+          navigation.isFocused()
+        ) {
+          await loadSchedules();
+        }
+
+      } finally {
+        deletingRef.current = false;
+
+        setDeletingDateISO(null);
+      }
+    }
+  }
+
+  // ==================================================
+  // CONFIRMAR ELIMINACIÓN
+  // ==================================================
+
+  function confirmDeleteSchedule(
+    schedule: CenterSpecialSchedule
+  ) {
+    if (
+      deletingRef.current ||
+      loadingRef.current ||
+      deleteAlertOpenRef.current ||
+      !navigation.isFocused()
+    ) {
+      return;
+    }
+
+    const fullDate = formatCenterDate(
+      schedule.dateISO
+    );
+
+    deleteAlertOpenRef.current = true;
+
+    Alert.alert(
+      'Eliminar horario especial',
+      `¿Estás seguro de que quieres eliminar el horario especial del ${fullDate}? Esta acción no se puede deshacer. Se eliminará esta excepción de la configuración. Las citas existentes no se modificarán.`,
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+          onPress: () => {
+            deleteAlertOpenRef.current = false;
+          },
+        },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: () => {
+            deleteAlertOpenRef.current = false;
+
+            if (navigation.isFocused()) {
+              void handleDeleteSchedule(
+                schedule.dateISO
+              );
+            }
+          },
+        },
+      ],
+      {
+        cancelable: true,
+        onDismiss: () => {
+          deleteAlertOpenRef.current = false;
+        },
+      }
+    );
   }
 
   return (
@@ -190,7 +711,12 @@ export default function CenterSpecialSchedulesScreen() {
       >
         <Pressable
           style={styles.backButton}
-          onPress={() => navigation.goBack()}
+          onPress={() => {
+            if (!deletingRef.current) {
+              navigation.goBack();
+            }
+          }}
+          disabled={isDeleting}
           accessibilityRole="button"
           accessibilityLabel="Volver"
         >
@@ -208,6 +734,20 @@ export default function CenterSpecialSchedulesScreen() {
 
       <ScrollView
         style={styles.scroll}
+        alwaysBounceVertical
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            enabled={
+              !loading &&
+              !loadingMore &&
+              !isDeleting
+            }
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }
         contentContainerStyle={{
           paddingHorizontal: 20,
           paddingTop: 24,
@@ -238,15 +778,166 @@ export default function CenterSpecialSchedulesScreen() {
           </View>
         </View>
 
+        {/* SELECTOR DE VISTAS */}
+
+        <View style={styles.filterContainer}>
+          <Pressable
+            style={[
+              styles.filterButton,
+              viewMode === 'calendar' &&
+                styles.filterButtonActive,
+            ]}
+            disabled={isDeleting}
+            onPress={() =>
+              handleViewModeChange('calendar')
+            }
+            accessibilityRole="button"
+            accessibilityState={{
+              selected: viewMode === 'calendar',
+              disabled: isDeleting,
+            }}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={19}
+              color={
+                viewMode === 'calendar'
+                  ? colors.white
+                  : colors.textSecondary
+              }
+            />
+
+            <Text
+              style={[
+                styles.filterText,
+                viewMode === 'calendar' &&
+                  styles.filterTextActive,
+              ]}
+            >
+              Calendario
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.filterButton,
+              viewMode === 'list' &&
+                styles.filterButtonActive,
+            ]}
+            disabled={isDeleting}
+            onPress={() =>
+              handleViewModeChange('list')
+            }
+            accessibilityRole="button"
+            accessibilityState={{
+              selected: viewMode === 'list',
+              disabled: isDeleting,
+            }}
+          >
+            <Ionicons
+              name="list-outline"
+              size={20}
+              color={
+                viewMode === 'list'
+                  ? colors.white
+                  : colors.textSecondary
+              }
+            />
+
+            <Text
+              style={[
+                styles.filterText,
+                viewMode === 'list' &&
+                  styles.filterTextActive,
+              ]}
+            >
+              Listado
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* CALENDARIO MENSUAL */}
+
+        {viewMode === 'calendar' && (
+          <View style={styles.calendarContainer}>
+            <MonthlyCalendar
+              monthISO={monthISO}
+              todayISO={getCenterTodayISO()}
+              markedDates={markedDates}
+              onMonthChange={handleMonthChange}
+              onDayPress={handleCalendarDayPress}
+              disabled={isDeleting}
+              daysDisabled={
+                isBusy ||
+                !!error ||
+                !!paginationError
+              }
+            />
+
+            <View style={styles.calendarLegend}>
+              <View style={styles.legendItem}>
+                <View
+                  style={[
+                    styles.legendDot,
+                    styles.legendSpecial,
+                  ]}
+                />
+
+                <Text style={styles.legendText}>
+                  Horario especial
+                </Text>
+              </View>
+
+              <View style={styles.legendItem}>
+                <View
+                  style={[
+                    styles.legendDot,
+                    styles.legendClosed,
+                  ]}
+                />
+
+                <Text style={styles.legendText}>
+                  Cierre excepcional
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.calendarHint}>
+              <Ionicons
+                name="information-circle-outline"
+                size={20}
+                color={colors.primary}
+              />
+
+              <Text style={styles.calendarHintText}>
+                Pulsa sobre un día para configurar
+                o editar su horario especial.
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* AÑADIR HORARIO ESPECIAL */}
 
+        {viewMode === 'list' && (
+          <>
+
         <Pressable
-          style={styles.addButton}
-          onPress={() =>
-            navigation.navigate(
-              'CenterSpecialScheduleForm'
-            )
-          }
+          style={[
+            styles.addButton,
+            isDeleting && styles.disabledButton,
+          ]}
+          disabled={isDeleting}
+          onPress={() => {
+            if (
+              !deletingRef.current &&
+              !deleteAlertOpenRef.current
+            ) {
+              navigation.navigate(
+                'CenterSpecialScheduleForm'
+              );
+            }
+          }}
           accessibilityRole="button"
           accessibilityLabel="Añadir horario especial"
         >
@@ -271,6 +962,7 @@ export default function CenterSpecialSchedulesScreen() {
               filter === 'upcoming' &&
                 styles.filterButtonActive,
             ]}
+            disabled={isDeleting}
             onPress={() =>
               handleFilterChange('upcoming')
             }
@@ -306,6 +998,7 @@ export default function CenterSpecialSchedulesScreen() {
               filter === 'history' &&
                 styles.filterButtonActive,
             ]}
+            disabled={isDeleting}
             onPress={() =>
               handleFilterChange('history')
             }
@@ -336,6 +1029,28 @@ export default function CenterSpecialSchedulesScreen() {
           </Pressable>
 
         </View>
+
+          </>
+        )}
+
+        {/* ERROR DE ELIMINACIÓN */}
+
+        {!!deleteError && (
+          <View
+            style={styles.deleteErrorCard}
+            accessibilityLiveRegion="polite"
+          >
+            <Ionicons
+              name="alert-circle-outline"
+              size={23}
+              color={colors.error}
+            />
+
+            <Text style={styles.deleteErrorText}>
+              {deleteError}
+            </Text>
+          </View>
+        )}
 
         {/* CARGANDO */}
 
@@ -368,7 +1083,12 @@ export default function CenterSpecialSchedulesScreen() {
 
             <Pressable
               style={styles.retryButton}
-              onPress={() => void loadSchedules()}
+              onPress={() => {
+                if (!deletingRef.current) {
+                  void loadSchedules();
+                }
+              }}
+              disabled={isDeleting}
               accessibilityRole="button"
             >
               <Text style={styles.retryText}>
@@ -383,10 +1103,24 @@ export default function CenterSpecialSchedulesScreen() {
         {!loading && !error && (
           <>
             <Text style={styles.sectionTitle}>
-              {filter === 'upcoming'
-                ? 'PRÓXIMOS HORARIOS ESPECIALES'
-                : 'HISTÓRICO DE HORARIOS ESPECIALES'}
+              {viewMode === 'calendar'
+                ? 'HORARIOS ESPECIALES DEL MES'
+                : filter === 'upcoming'
+                  ? 'PRÓXIMOS HORARIOS ESPECIALES'
+                  : 'HISTÓRICO DE HORARIOS ESPECIALES'}
             </Text>
+
+            {schedules.length > 0 && (
+              <Text style={styles.resultsText}>
+                {viewMode === 'calendar'
+                  ? schedules.length === 1
+                    ? '1 horario especial este mes'
+                    : `${schedules.length} horarios especiales este mes`
+                  : schedules.length === 1
+                    ? '1 horario cargado'
+                    : `${schedules.length} horarios cargados`}
+              </Text>
+            )}
 
             {schedules.length === 0 ? (
               <View style={styles.emptyCard}>
@@ -399,15 +1133,19 @@ export default function CenterSpecialSchedulesScreen() {
                 </View>
 
                 <Text style={styles.emptyTitle}>
-                  {filter === 'upcoming'
-                    ? 'No hay horarios especiales'
-                    : 'No hay horarios anteriores'}
+                  {viewMode === 'calendar'
+                    ? 'Sin horarios especiales este mes'
+                    : filter === 'upcoming'
+                      ? 'No hay horarios especiales'
+                      : 'No hay horarios anteriores'}
                 </Text>
 
                 <Text style={styles.emptyDescription}>
-                  {filter === 'upcoming'
-                    ? 'No tienes horarios especiales configurados para próximas fechas.'
-                    : 'Todavía no tienes horarios especiales correspondientes a fechas anteriores.'}
+                  {viewMode === 'calendar'
+                    ? 'Pulsa sobre cualquier día del mes para configurar un horario especial o un cierre excepcional.'
+                    : filter === 'upcoming'
+                      ? 'No tienes horarios especiales configurados para próximas fechas.'
+                      : 'Todavía no tienes horarios especiales correspondientes a fechas anteriores.'}
                 </Text>
               </View>
             ) : (
@@ -415,32 +1153,93 @@ export default function CenterSpecialSchedulesScreen() {
                 <SpecialScheduleCard
                   key={schedule.dateISO}
                   schedule={schedule}
-                  onEdit={() =>
-                    navigation.navigate(
-                      'CenterSpecialScheduleForm',
-                      {
-                        schedule,
-                      }
+                  disabled={isBusy}
+                  deleting={
+                    deletingDateISO ===
+                      schedule.dateISO
+                  }
+                  onEdit={() => {
+                    if (
+                      !deletingRef.current &&
+                      !loadingRef.current &&
+                      !deleteAlertOpenRef.current
+                    ) {
+                      navigation.navigate(
+                        'CenterSpecialScheduleForm',
+                        {
+                          schedule,
+                        }
+                      );
+                    }
+                  }}
+                  onDelete={() =>
+                    confirmDeleteSchedule(
+                      schedule
                     )
                   }
                 />
               ))
             )}
 
-            {hasMore && (
-              <View style={styles.noticeCard}>
+            {!!paginationError && (
+              <View
+                style={styles.deleteErrorCard}
+                accessibilityLiveRegion="polite"
+              >
                 <Ionicons
-                  name="information-circle-outline"
+                  name="alert-circle-outline"
                   size={23}
-                  color={colors.primary}
+                  color={colors.error}
                 />
 
-                <Text style={styles.noticeText}>
-                  Se muestran los primeros {
-                    DEFAULT_SPECIAL_SCHEDULE_PAGE_SIZE
-                  } horarios. Hay más resultados disponibles.
+                <Text style={styles.deleteErrorText}>
+                  {paginationError}
                 </Text>
               </View>
+            )}
+
+            {viewMode === 'list' && hasMore && (
+              <Pressable
+                style={[
+                  styles.loadMoreButton,
+                  isBusy && styles.disabledButton,
+                ]}
+                disabled={isBusy}
+                onPress={handleLoadMore}
+                accessibilityRole="button"
+                accessibilityState={{
+                  disabled: isBusy,
+                  busy: loadingMore,
+                }}
+              >
+                {loadingMore ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={colors.primary}
+                  />
+                ) : (
+                  <Ionicons
+                    name="chevron-down-circle-outline"
+                    size={22}
+                    color={colors.primary}
+                  />
+                )}
+
+                <Text style={styles.loadMoreText}>
+                  {loadingMore
+                    ? 'Cargando horarios...'
+                    : 'Cargar más horarios'}
+                </Text>
+              </Pressable>
+            )}
+
+            {viewMode === 'list' &&
+              !hasMore &&
+              !paginationError &&
+              schedules.length > 0 && (
+              <Text style={styles.endResultsText}>
+                Todos los horarios están cargados.
+              </Text>
             )}
           </>
         )}
@@ -579,6 +1378,67 @@ const styles = StyleSheet.create({
     color: colors.white,
   },
 
+  calendarContainer: {
+    marginTop: 18,
+  },
+
+  calendarLegend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    columnGap: 16,
+    rowGap: 10,
+    marginTop: 16,
+  },
+
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+
+  legendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 4,
+  },
+
+  legendSpecial: {
+    backgroundColor: colors.primaryContainer,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+
+  legendClosed: {
+    backgroundColor: colors.errorContainer,
+    borderWidth: 1,
+    borderColor: colors.error,
+  },
+
+  legendText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
+
+  calendarHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    padding: 12,
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 12,
+    marginTop: 16,
+  },
+
+  calendarHintText: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.textSecondary,
+  },
+
   sectionTitle: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 11,
@@ -650,21 +1510,61 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
 
-  noticeCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 16,
-    borderRadius: 14,
-    backgroundColor: colors.surfaceMuted,
-    marginTop: 20,
+  disabledButton: {
+    opacity: 0.45,
   },
 
-  noticeText: {
+  deleteErrorCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: colors.errorContainer,
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 16,
+  },
+
+  deleteErrorText: {
     flex: 1,
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
     lineHeight: 19,
-    color: colors.textSecondary,
+    color: colors.error,
+  },
+
+  resultsText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: colors.textMuted,
+    marginBottom: 14,
+  },
+
+  loadMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: 14,
+    minHeight: 52,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginTop: 16,
+  },
+
+  loadMoreText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: colors.primary,
+  },
+
+  endResultsText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: 18,
   },
 });

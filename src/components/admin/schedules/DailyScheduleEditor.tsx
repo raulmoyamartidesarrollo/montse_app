@@ -1,6 +1,7 @@
 import React from 'react';
 
 import {
+  Alert,
   Pressable,
   StyleSheet,
   Switch,
@@ -275,13 +276,38 @@ export default function DailyScheduleEditor({
       return;
     }
 
-    onChange({
-      closed: false,
-      periods: periods.filter(
-        (_, currentIndex) =>
-          currentIndex !== index
-      ),
-    });
+    const period = periods[index];
+
+    if (!period) {
+      return;
+    }
+
+    Alert.alert(
+      'Eliminar tramo horario',
+      `¿Estás seguro de que quieres eliminar el tramo de ${period.start} a ${period.end}? El cambio se aplicará cuando guardes el horario.`,
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: () => {
+            onChange({
+              closed: false,
+              periods: periods.filter(
+                (_, currentIndex) =>
+                  currentIndex !== index
+              ),
+            });
+          },
+        },
+      ],
+      {
+        cancelable: true,
+      }
+    );
   };
 
   // ==================================================

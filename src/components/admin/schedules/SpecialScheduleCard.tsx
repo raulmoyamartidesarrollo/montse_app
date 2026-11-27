@@ -1,6 +1,7 @@
 import React from 'react';
 
 import {
+  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -28,6 +29,7 @@ type Props = {
   onEdit?: () => void;
   onDelete?: () => void;
   disabled?: boolean;
+  deleting?: boolean;
 };
 
 // ==================================================
@@ -39,6 +41,7 @@ export default function SpecialScheduleCard({
   onEdit,
   onDelete,
   disabled = false,
+  deleting = false,
 }: Props) {
   const day = schedule.dateISO.slice(8, 10);
 
@@ -235,16 +238,26 @@ export default function SpecialScheduleCard({
               }
               accessibilityState={{
                 disabled,
+                busy: deleting,
               }}
             >
-              <Ionicons
-                name="trash-outline"
-                size={19}
-                color={colors.error}
-              />
+              {deleting ? (
+                <ActivityIndicator
+                  size="small"
+                  color={colors.error}
+                />
+              ) : (
+                <Ionicons
+                  name="trash-outline"
+                  size={19}
+                  color={colors.error}
+                />
+              )}
 
               <Text style={styles.deleteText}>
-                Eliminar
+                {deleting
+                  ? 'Eliminando...'
+                  : 'Eliminar'}
               </Text>
             </Pressable>
           )}

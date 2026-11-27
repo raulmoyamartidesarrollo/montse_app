@@ -127,8 +127,16 @@ export default function CenterSpecialScheduleFormScreen({
   const existingSchedule =
     route.params?.schedule;
 
+  const selectedDateISO =
+    route.params?.dateISO;
+
   const isEditing =
     existingSchedule !== undefined;
+
+  const initialDateISO =
+    isValidDateISO(selectedDateISO)
+      ? selectedDateISO
+      : getCenterTodayISO();
 
   const [original] =
     useState<CreateCenterSpecialScheduleInput>(() =>
@@ -139,7 +147,7 @@ export default function CenterSpecialScheduleFormScreen({
             ...cloneDailySchedule(existingSchedule),
           }
         : createEmptySpecialSchedule(
-            getCenterTodayISO()
+            initialDateISO
           )
     );
 
